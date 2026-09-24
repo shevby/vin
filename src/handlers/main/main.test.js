@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { paths } = require('../../paths');
 const Vin = require('../../vin');
 const Confirm = require('../confirm/confirm');
 const Main = require('./main');
@@ -8,10 +12,12 @@ const { tick } = require('../../../test/dialogs');
 /**
  * A vin with the main window open, as `start()` opens it.
  * @param {string} [config] The config file's text.
+ * @param {{ left?: string, right?: string }} [dirs] The panes' directories, as URIs. Default: ones that
+ *   don't exist.
  */
-async function open(config) {
+async function open(config, { left = 'file:///a', right = 'file:///b' } = {}) {
   const vin = new Vin();
-  const main = new Main({ left: 'file:///a', right: 'file:///b' });
+  const main = new Main({ left, right });
   vin.register(main);
   if (config !== undefined) {
     vin.config.parse(config, 'config.json5');
@@ -84,4 +90,42 @@ test('a dialog over the main window gets the keys; the focus comes back to the a
   await press('escape');
   assert.equal(await answer, null);
   assert.equal(focus(), 'main.right');
+});
+
+test('keys move the cursor and go into and out of directories, and back and forward', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vin-main-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const name of ['a', 'b', 'c']) {
+    fs.mkdirSync(path.join(dir, name));
+  }
+  fs.writeFileSync(path.join(dir, 'b', 'f'), '');
+  const { main, press } = await open(undefined, { left: paths.toUri(dir) });
+  const pane = main.left;
+  /**
+   * Presses keys, then waits for the listing they asked for.
+   * @param {string} keys
+   */
+  const go = async (keys) => {
+    await press(keys);
+    await pane.loaded;
+  };
+  const where = () => [paths.displayUri(pane.state.uri), pane.state.entries[pane.state.cursor]?.name];
+  const home = paths.display(dir);
+  await pane.loaded;
+  await go('j j k');
+  assert.deepEqual(where(), [home, 'b']);
+  await go('l');
+  assert.deepEqual(where(), [`${home}/b`, 'f']);
+  await go('h');
+  assert.deepEqual(where(), [home, 'b']);
+  await go('shift+g');
+  assert.deepEqual(where(), [home, 'c']);
+  await go('g g');
+  assert.deepEqual(where(), [home, 'a']);
+  await go('alt+left');
+  assert.deepEqual(where(), [`${home}/b`, 'f']);
+  await go('alt+right');
+  assert.deepEqual(where(), [home, 'a']);
+  await go('~');
+  assert.equal(pane.state.uri, paths.toUri(paths.home));
 });

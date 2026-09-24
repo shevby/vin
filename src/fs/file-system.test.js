@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { FileSystem, childUri } = require('./file-system');
+const { FileSystem, childUri, parentUri } = require('./file-system');
 const Vin = require('../vin');
 const Handler = require('../handler');
 const { paths } = require('../paths');
@@ -105,5 +105,20 @@ test('childUri names an entry of a directory, whatever the scheme', () => {
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parentUri gives the containing directory and the name in it, and null for a root', () => {
+  assert.deepEqual(parentUri('sftp://host/home/me/a%20b'), { uri: 'sftp://host/home/me', name: 'a b' });
+  assert.deepEqual(parentUri('sftp://host/home/'), { uri: 'sftp://host/', name: 'home' });
+  assert.equal(parentUri('sftp://host/'), null);
+  const dir = path.join(os.tmpdir(), 'a b');
+  assert.deepEqual(parentUri(childUri(paths.toUri(dir), "it's;1")), { uri: paths.toUri(dir), name: "it's;1" });
+  assert.deepEqual(parentUri(paths.toUri(dir)), { uri: paths.toUri(os.tmpdir()), name: 'a b' });
+  const root = path.parse(os.tmpdir()).root;
+  assert.equal(parentUri(paths.toUri(root)), null, root);
+  if (process.platform === 'win32') {
+    assert.equal(parentUri('file://server/share/'), null, 'a share is a root');
+    assert.deepEqual(parentUri('file://server/share/x'), { uri: 'file://server/share/', name: 'x' });
   }
 });

@@ -16,7 +16,7 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 
 ## Keys
 
-- Arrow keys and `hjkl` for navigation.
+- Arrow keys and `hjkl` for navigation (see Panes).
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
 - `Escape` closes the window on top (a dialog, a menu), never the main window.
@@ -27,7 +27,18 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 
 ## Panes
 
-As in vifm:
+Moving around a pane, mostly as in vifm:
+
+- `j`/`k` or `Down`/`Up` — the next or previous entry.
+- `g g`/`shift+g` or `Home`/`End` — the first or last entry.
+- `ctrl+f`/`ctrl+b` or `PageDown`/`PageUp` — a page down or up: first to the bottom (top) row shown, then a page at a time, keeping one row of the last page in view. `ctrl+d`/`ctrl+u` — half a page.
+- `l`, `Right`, or `Enter` — into the directory under the cursor. On a file, a message says it can't be opened yet (2.5).
+- `h`, `Left`, `Backspace`, or `alt+Up` — up to the parent directory, with the cursor on the one you came from. There's no `..` entry.
+- `~` — the home directory.
+- `alt+Left` (`ctrl+o`, as in vifm) / `alt+Right` — back and forward through the directories this pane has shown, as in a browser. vifm's forward key is `ctrl+i`, which terminals send as `Tab`, taken by switching panes.
+- A directory you come back to — by any of these — has the cursor where you left it.
+
+Switching panes, as in vifm:
 
 - `Tab`, `ctrl+w w`, `ctrl+w ctrl+w` — switch to the other pane.
 - `ctrl+w h`, `ctrl+w l` — switch to the left or the right pane.

@@ -1,4 +1,4 @@
-import { memo, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { Box, Text, useBoxMetrics } from 'ink';
 import { formatSize, formatTime } from '../../../../src/format.js';
 import { useLineStyle, useStyle } from '../../common/theme/index.js';
@@ -140,10 +140,16 @@ const MemoRow = memo(Row);
  * @param {Status} props.status
  * @param {boolean} props.active Whether the pane is active: its cursor is `pane.cursorActive`, the other's
  *   `pane.cursor`.
+ * @param {(rows: number) => void} [props.onHeight] Called with the rows that fit, whenever that changes.
  */
-export function Listing({ entries, cursor, status, active }) {
+export function Listing({ entries, cursor, status, active, onHeight }) {
   const ref = useRef(null);
   const { width, height } = useBoxMetrics(ref);
+  useEffect(() => {
+    if (height > 0) {
+      onHeight?.(height);
+    }
+  }, [height, onHeight]);
   const topRef = useRef(0);
   const top = scrollTop(topRef.current, cursor, height, entries.length);
   topRef.current = top;

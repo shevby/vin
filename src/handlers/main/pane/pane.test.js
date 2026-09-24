@@ -83,3 +83,111 @@ test('disposing a pane while it lists leaves its state alone', async (t) => {
   await pane.loaded;
   assert.deepEqual(vin.messages.list, []);
 });
+
+/**
+ * @param {Pane} pane
+ * @returns {string | null} The name under the cursor.
+ */
+const current = (pane) => pane.state.entries[pane.state.cursor]?.name ?? null;
+
+test('the cursor moves by one, by pages, and to the ends, staying in the listing', async (t) => {
+  const dir = tempDir(t, Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`f${String(i).padStart(2, '0')}`, ''])));
+  const { pane } = await open(dir);
+  await pane.loaded;
+  pane.up();
+  assert.equal(pane.state.cursor, 0, 'already at the top');
+  pane.down();
+  pane.down();
+  assert.equal(pane.state.cursor, 2);
+  pane.setPageSize(10);
+  pane.pageDown();
+  assert.equal(pane.state.cursor, 11, 'a page less a row');
+  pane.halfPageDown();
+  assert.equal(pane.state.cursor, 16);
+  pane.halfPageUp();
+  pane.pageUp();
+  assert.equal(pane.state.cursor, 2);
+  pane.last();
+  assert.equal(pane.state.cursor, 49);
+  pane.pageDown();
+  pane.down();
+  assert.equal(pane.state.cursor, 49);
+  pane.first();
+  assert.equal(pane.state.cursor, 0);
+  assert.throws(() => pane.setPageSize(0), TypeError);
+});
+
+test('open enters a directory, parent comes back with the cursor on it, and a file says it can\'t be opened yet', async (t) => {
+  const dir = tempDir(t, { a: null, b: null, 'f.txt': '' });
+  fs.writeFileSync(path.join(dir, 'b', 'inner.txt'), '');
+  fs.mkdirSync(path.join(dir, 'b', 'deep'));
+  const { vin, pane } = await open(dir);
+  await pane.loaded;
+  pane.down();
+  await pane.open();
+  assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'b')));
+  assert.deepEqual(pane.state.entries.map((entry) => entry.name), ['deep', 'inner.txt']);
+  assert.equal(pane.state.cursor, 0);
+  pane.down();
+  await pane.toParent();
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  assert.equal(current(pane), 'b', 'on the directory it came from');
+  await pane.open();
+  assert.equal(current(pane), 'inner.txt', 'back where it was left');
+  await pane.open();
+  assert.deepEqual(vin.messages.list.map((message) => message.text), ["Opening files isn't supported yet"]);
+  assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'b')));
+});
+
+test('back and forward go through the history, which a new directory cuts short', async (t) => {
+  const dir = tempDir(t, { a: null, b: null });
+  const { pane } = await open(dir);
+  await pane.loaded;
+  const uri = (/** @type {string[]} */ ...names) => paths.toUri(path.join(dir, ...names));
+  await pane.open();
+  await pane.toParent();
+  await pane.navigate('b');
+  assert.equal(pane.state.uri, uri('b'), 'a path, relative to the directory shown');
+  await pane.back();
+  assert.equal(pane.state.uri, uri());
+  await pane.back();
+  assert.equal(pane.state.uri, uri('a'));
+  await pane.back();
+  await pane.back();
+  assert.equal(pane.state.uri, uri(), 'the first directory');
+  await pane.forward();
+  assert.equal(pane.state.uri, uri('a'));
+  await pane.navigate(paths.toUri(path.join(dir, 'b')));
+  await pane.forward();
+  assert.equal(pane.state.uri, uri('b'), 'nothing ahead any more');
+  await pane.back();
+  assert.equal(pane.state.uri, uri('a'));
+});
+
+test('a directory that can\'t be entered is reported, and the pane stays; history drops it', async (t) => {
+  const dir = tempDir(t, { a: null, b: null });
+  const { vin, pane } = await open(dir);
+  await pane.loaded;
+  await pane.navigate('b');
+  await pane.navigate('../a');
+  fs.rmdirSync(path.join(dir, 'b'));
+  await pane.back();
+  assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'a')), 'stays');
+  assert.equal(pane.state.status, 'ready');
+  assert.match(vin.messages.list[0]?.text ?? '', /No such file or directory/);
+  await pane.back();
+  assert.equal(pane.state.uri, paths.toUri(dir), 'past the one dropped');
+  await pane.navigate('missing');
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  assert.equal(vin.messages.list.length, 2);
+});
+
+test('home goes to the home directory, and a root has no parent', async (t) => {
+  const { pane } = await open(path.parse(os.tmpdir()).root);
+  await pane.loaded;
+  const root = pane.state.uri;
+  await pane.toParent();
+  assert.equal(pane.state.uri, root);
+  await pane.home();
+  assert.equal(pane.state.uri, paths.toUri(paths.home));
+});

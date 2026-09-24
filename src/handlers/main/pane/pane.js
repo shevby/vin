@@ -1,5 +1,6 @@
 const Handler = require('../../../handler');
-const { childUri } = require('../../../fs/file-system');
+const { childUri, parentUri } = require('../../../fs/file-system');
+const { paths } = require('../../../paths');
 
 /** @typedef {import('../../../fs/file-system').FileType} FileType */
 
@@ -16,12 +17,23 @@ const { childUri } = require('../../../fs/file-system');
  */
 
 /**
- * `loading` until the directory is read; `failed` if it couldn't be (the error is reported).
+ * `loading` until the first directory is read; `failed` if it couldn't be (the error is reported).
  * @typedef {'loading' | 'ready' | 'failed'} Status
+ */
+
+/**
+ * How a listing ended: shown, failed (and reported), or dropped for a newer one — or for disposal.
+ * @typedef {'listed' | 'failed' | 'superseded'} Outcome
  */
 
 /** Entries whose details are fetched at once — and sent to the UI as one update. */
 const STAT_BATCH = 256;
+
+/** Directories a pane's history keeps, as a browser's does. */
+const HISTORY_SIZE = 100;
+
+/** Directories a pane remembers its cursor in, so coming back puts it where it was. */
+const POSITIONS_SIZE = 1000;
 
 /** Natural order (`file2` before `file10`), ignoring case and accents. */
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -40,9 +52,31 @@ function compareEntries(a, b) {
 }
 
 /**
+ * A `file:` URI as `paths.toUri()` writes it, so a directory has one URI however it was reached
+ * (`childUri()` escapes more than `toUri()` does); any other URI as it is.
+ * @param {string} uri
+ * @returns {string}
+ */
+function canonical(uri) {
+  if (/^file:/i.test(uri)) {
+    try {
+      return paths.toUri(paths.fromUri(uri));
+    } catch {
+      // Not a path on this OS: left as it is.
+    }
+  }
+  return uri;
+}
+
+/**
  * One pane of the main window (`src/handlers/main/`): a view of one directory, addressed by URI so a pane
  * can later show any provider's files (`src/fs/`). It lists the directory (`entries`) with a cursor on one
- * of them (`cursor`, an index); moving it and navigation come with 2.3.
+ * of them (`cursor`, an index), and moves between directories (2.3): into the one under the cursor, up to
+ * the parent — with the cursor on the directory it came from — home, or back and forward through its
+ * history, as a browser does. A directory it comes back to gets its cursor where it was left.
+ *
+ * Moving to another directory keeps the current listing until the new one is read, so one that can't be
+ * (no permission, gone) is reported and the pane stays where it was.
  * @extends {Handler<{ uri: string, status: Status, entries: Entry[], cursor: number }>}
  */
 class Pane extends Handler {
@@ -50,6 +84,49 @@ class Pane extends Handler {
 
   /** @type {import('../../../contributions').Contributes} */
   static contributes = {
+    commands: [
+      { method: 'up', title: 'Cursor up' },
+      { method: 'down', title: 'Cursor down' },
+      { method: 'first', title: 'Cursor to the first entry' },
+      { method: 'last', title: 'Cursor to the last entry' },
+      { method: 'pageUp', title: 'Cursor up a page' },
+      { method: 'pageDown', title: 'Cursor down a page' },
+      { method: 'halfPageUp', title: 'Cursor up half a page' },
+      { method: 'halfPageDown', title: 'Cursor down half a page' },
+      { method: 'open', title: 'Open', description: 'Enters the directory under the cursor' },
+      { method: 'toParent', title: 'Go to the parent directory' },
+      { method: 'home', title: 'Go to the home directory' },
+      { method: 'back', title: 'Go back', description: 'To the directory shown before, in this pane' },
+      { method: 'forward', title: 'Go forward', description: 'To the directory left by going back' },
+      { method: 'navigate', title: 'Go to a directory', description: 'Shows the directory at a path or URI' },
+    ],
+    keybindings: [
+      { key: 'up', command: 'pane.up' },
+      { key: 'k', command: 'pane.up' },
+      { key: 'down', command: 'pane.down' },
+      { key: 'j', command: 'pane.down' },
+      { key: 'home', command: 'pane.first' },
+      { key: 'g g', command: 'pane.first' },
+      { key: 'end', command: 'pane.last' },
+      { key: 'shift+g', command: 'pane.last' },
+      { key: 'pageup', command: 'pane.pageUp' },
+      { key: 'ctrl+b', command: 'pane.pageUp' },
+      { key: 'pagedown', command: 'pane.pageDown' },
+      { key: 'ctrl+f', command: 'pane.pageDown' },
+      { key: 'ctrl+u', command: 'pane.halfPageUp' },
+      { key: 'ctrl+d', command: 'pane.halfPageDown' },
+      { key: 'enter', command: 'pane.open' },
+      { key: 'l', command: 'pane.open' },
+      { key: 'right', command: 'pane.open' },
+      { key: 'h', command: 'pane.toParent' },
+      { key: 'left', command: 'pane.toParent' },
+      { key: 'backspace', command: 'pane.toParent' },
+      { key: 'alt+up', command: 'pane.toParent' },
+      { key: '~', command: 'pane.home' },
+      { key: 'alt+left', command: 'pane.back' },
+      { key: 'ctrl+o', command: 'pane.back' },
+      { key: 'alt+right', command: 'pane.forward' },
+    ],
     // papercolor-dark, from vifm-colors; see src/colors.js.
     colors: [
       { key: 'title', default: { fg: 71, bg: 235, bold: true }, description: "The other pane's directory, in its top border (vifm: TopLine)." },
@@ -70,8 +147,18 @@ class Pane extends Handler {
   #uri;
   /** Counts listings started, so one outdated by a newer one — or by disposal — stops touching state. */
   #generation = 0;
-  /** @type {Promise<void>} */
-  #loading = Promise.resolve();
+  /** @type {Promise<Outcome>} The latest listing. */
+  #listing = Promise.resolve(/** @type {Outcome} */ ('listed'));
+  /** @type {Promise<void>} The latest listing's details. */
+  #details = Promise.resolve();
+  /** @type {string[]} Directories shown, oldest first, as URIs. */
+  #history = [];
+  /** Where in `#history` the pane is. */
+  #index = 0;
+  /** @type {Map<string, string>} The entry the cursor was on when each directory was left, oldest first. */
+  #positions = new Map();
+  /** Rows the UI shows at once, which the page commands move by; the UI reports it (`setPageSize()`). */
+  #pageSize = 20;
 
   /**
    * @param {string} name `left` or `right`, in the main window.
@@ -84,13 +171,15 @@ class Pane extends Handler {
     if (typeof uri !== 'string' || !/^[a-z][a-z\d+.-]*:/i.test(uri)) {
       throw new TypeError(`Pane "${name}" needs a directory URI, got ${JSON.stringify(uri)}`);
     }
-    this.#uri = uri;
+    this.#uri = canonical(uri);
   }
 
   onInit() {
     this.update({ uri: this.#uri, status: 'loading', entries: [], cursor: 0 });
+    this.#history = [this.#uri];
+    this.#index = 0;
     // Not awaited: vin starts while the directory is read.
-    this.#loading = this.#load();
+    this.#list(this.#uri, null);
   }
 
   onDispose() {
@@ -98,40 +187,250 @@ class Pane extends Handler {
   }
 
   /**
-   * Resolves once the directory is listed and every entry's details are in, or listing it failed.
+   * Resolves once the latest directory asked for is listed and every entry's details are in, or listing it
+   * failed.
    * @returns {Promise<void>}
    */
   get loaded() {
-    return this.#loading;
+    return this.#listing.then(() => this.#details);
   }
 
   /**
-   * Lists the directory, then fetches its entries' details in batches from the top, each batch one update.
-   * A failure to list is reported; an entry that can't be read (gone since, or no permission) keeps no
-   * details.
+   * Tells the pane how many rows the UI shows at once, for the page commands.
+   * @param {number} rows
+   * @throws {TypeError} If `rows` isn't a positive integer.
    */
-  async #load() {
+  setPageSize(rows) {
+    if (!Number.isInteger(rows) || rows < 1) {
+      throw new TypeError(`Expected a positive number of rows, got ${JSON.stringify(rows)}`);
+    }
+    this.#pageSize = rows;
+  }
+
+  up() {
+    this.#move(this.state.cursor - 1);
+  }
+
+  down() {
+    this.#move(this.state.cursor + 1);
+  }
+
+  first() {
+    this.#move(0);
+  }
+
+  last() {
+    this.#move(this.state.entries.length - 1);
+  }
+
+  /**
+   * Moves the cursor up a page less a row. As the view scrolls only as far as keeps the cursor in it, that
+   * takes it to the top row shown, then pages so the top row becomes the bottom one.
+   */
+  pageUp() {
+    this.#move(this.state.cursor - Math.max(1, this.#pageSize - 1));
+  }
+
+  /** Moves the cursor down a page less a row, as `pageUp()` goes up. */
+  pageDown() {
+    this.#move(this.state.cursor + Math.max(1, this.#pageSize - 1));
+  }
+
+  halfPageUp() {
+    this.#move(this.state.cursor - Math.max(1, Math.floor(this.#pageSize / 2)));
+  }
+
+  halfPageDown() {
+    this.#move(this.state.cursor + Math.max(1, Math.floor(this.#pageSize / 2)));
+  }
+
+  /**
+   * Enters the directory under the cursor. Opening a file comes with 2.5; until then, it says so.
+   */
+  async open() {
+    const entry = this.state.entries[this.state.cursor];
+    if (!entry) {
+      return;
+    }
+    if (entry.type !== 'directory') {
+      this.notify("Opening files isn't supported yet");
+      return;
+    }
+    await this.#go(canonical(childUri(this.state.uri, entry.name)), null);
+  }
+
+  /**
+   * Goes up to the parent directory, with the cursor on the one it came from. A root has none — the list of
+   * drives above `C:\` is 2.4.
+   */
+  async toParent() {
+    const up = parentUri(this.state.uri);
+    if (up) {
+      await this.#go(up.uri, up.name);
+    }
+  }
+
+  /** Goes to the user's home directory. */
+  async home() {
+    await this.#go(paths.toUri(paths.home), null);
+  }
+
+  /** Goes back to the directory shown before this one. */
+  async back() {
+    await this.#step(-1);
+  }
+
+  /** Goes forward again, after going back. */
+  async forward() {
+    await this.#step(1);
+  }
+
+  /**
+   * Shows another directory.
+   * @param {string} target A URI (`sftp://host/x`), or a path as `paths.resolve()` reads it — typed or
+   *   pasted, native or Unix-style, `~/…` — relative to the directory shown.
+   * @throws {TypeError} If `target` isn't a string.
+   * @throws {Error} With code `EPATH`, if it isn't a path.
+   */
+  async navigate(target) {
+    if (typeof target !== 'string') {
+      throw new TypeError(`Expected a path or URI, got ${JSON.stringify(target)}`);
+    }
+    // A scheme of two letters at least: `C:` starts a Windows path.
+    const uri = /^[a-z][a-z\d+.-]+:/i.test(target) ? canonical(target) : paths.toUri(paths.resolve(target, this.#here()));
+    await this.#go(uri, null);
+  }
+
+  /**
+   * @returns {string | undefined} The directory shown, as a path, if it's on the local disk.
+   */
+  #here() {
+    try {
+      return paths.fromUri(this.state.uri);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Puts the cursor on an entry, kept within the listing.
+   * @param {number} index
+   */
+  #move(index) {
+    const count = this.state.entries.length;
+    const cursor = Math.max(0, Math.min(index, count - 1));
+    if (count && cursor !== this.state.cursor) {
+      this.state.cursor = cursor;
+    }
+  }
+
+  /**
+   * Shows a directory and adds it to the history, dropping any ahead, as a browser does.
+   * @param {string} uri Canonical.
+   * @param {string | null} focus The entry to put the cursor on; else where it was left, or the first.
+   */
+  async #go(uri, focus) {
+    if (await this.#list(uri, focus) !== 'listed' || this.#history[this.#index] === uri) {
+      return;
+    }
+    this.#history.splice(this.#index + 1, Infinity, uri);
+    if (this.#history.length > HISTORY_SIZE) {
+      this.#history.shift();
+    }
+    this.#index = this.#history.length - 1;
+  }
+
+  /**
+   * Moves through the history. A directory there that can't be listed any more is dropped from it.
+   * @param {-1 | 1} delta
+   */
+  async #step(delta) {
+    const index = this.#index + delta;
+    const uri = this.#history[index];
+    if (uri === undefined) {
+      return;
+    }
+    const outcome = await this.#list(uri, null);
+    if (outcome === 'listed') {
+      this.#index = index;
+    } else if (outcome === 'failed') {
+      this.#history.splice(index, 1);
+      this.#index -= Number(index < this.#index);
+    }
+  }
+
+  /**
+   * Starts listing a directory, as the latest listing.
+   * @param {string} uri
+   * @param {string | null} focus
+   * @returns {Promise<Outcome>} Once it's shown, or not.
+   */
+  #list(uri, focus) {
+    this.#listing = this.#load(uri, focus);
+    return this.#listing;
+  }
+
+  /**
+   * Lists a directory and shows it, then fetches its entries' details in batches from the top (`#details`).
+   * A failure to list is reported.
+   * @param {string} uri
+   * @param {string | null} focus
+   * @returns {Promise<Outcome>} Once the listing is shown, or not.
+   */
+  async #load(uri, focus) {
     const generation = ++this.#generation;
     const current = () => generation === this.#generation;
-    const { uri } = this.state;
     /** @type {import('../../../fs/file-system').DirectoryEntry[]} */
     let listed;
     try {
       listed = await this.fs.readDirectory(uri);
     } catch (error) {
-      if (current()) {
-        this.state.status = 'failed';
-        this.report(error);
+      if (!current()) {
+        return 'superseded';
       }
-      return;
+      if (this.state.status === 'loading') {
+        this.state.status = 'failed';
+      }
+      this.report(error);
+      return 'failed';
     }
     if (!current()) {
-      return;
+      return 'superseded';
     }
     const entries = listed
       .map(({ name, type, symlink }) => ({ name, type, symlink, executable: false, size: null, mtime: null }))
       .sort(compareEntries);
-    Object.assign(this.state, { status: 'ready', entries, cursor: 0 });
+    this.#remember();
+    const name = focus ?? this.#positions.get(uri) ?? null;
+    const cursor = name === null ? 0 : Math.max(0, entries.findIndex((entry) => entry.name === name));
+    Object.assign(this.state, { uri, status: 'ready', entries, cursor });
+    this.#details = this.#fetchDetails(uri, entries, current);
+    return 'listed';
+  }
+
+  /**
+   * Remembers the entry under the cursor in the directory shown, for when the pane comes back to it.
+   */
+  #remember() {
+    const { uri, status, entries, cursor } = this.state;
+    if (status !== 'ready' || !entries[cursor]) {
+      return;
+    }
+    this.#positions.delete(uri);
+    this.#positions.set(uri, entries[cursor].name);
+    if (this.#positions.size > POSITIONS_SIZE) {
+      this.#positions.delete(/** @type {string} */ (this.#positions.keys().next().value));
+    }
+  }
+
+  /**
+   * Fetches the entries' details in batches, each batch one update. An entry that can't be read (gone
+   * since, or no permission) keeps none.
+   * @param {string} uri The directory listed.
+   * @param {Entry[]} entries As listed, in the order shown.
+   * @param {() => boolean} current Whether this listing is still the latest.
+   */
+  async #fetchDetails(uri, entries, current) {
     for (let start = 0; start < entries.length; start += STAT_BATCH) {
       const batch = entries.slice(start, start + STAT_BATCH);
       const stats = await Promise.all(batch.map((entry) => this.fs.stat(childUri(uri, entry.name)).catch(() => null)));
