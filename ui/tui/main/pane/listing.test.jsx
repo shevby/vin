@@ -13,6 +13,7 @@ import { App } from '../../app.jsx';
 import { connect, disconnect } from '../../handler.js';
 import { settle } from '../../../../test/ui.jsx';
 import { columnsFor, marker, scrollTop } from './listing.jsx';
+import { selectionCount } from './pane.jsx';
 
 /**
  * A temp directory, removed after the test.
@@ -131,6 +132,32 @@ test('the cursor line is inverse in the active pane, dimmed in the other, in the
   // The other pane: OtherLine's background (235), the directory's color as the text.
   assert.ok(row.includes('\x1b[48;5;235m'));
   assert.ok(row.includes('\x1b[38;5;74m'));
+});
+
+test('selected rows get a check in a gutter shown while anything is selected; the border counts them', async (t) => {
+  const dir = tempDir(t, { a: '', b: '', c: '', d: '' });
+  const { main, lines } = await setup(t, dir);
+  /** @returns {Promise<string[]>} The left pane's rows, as far as the names go. */
+  const rows = async () => (await lines()).slice(1, 5).map((line) => line.slice(1, 5));
+  assert.deepEqual(await rows(), ['a   ', 'b   ', 'c   ', 'd   '], 'no gutter');
+  main.left.toggleSelection();
+  assert.deepEqual(await rows(), ['✓ a ', '  b ', '  c ', '  d ']);
+  main.left.last();
+  main.left.groupSelection();
+  main.left.up();
+  const screen = await lines();
+  assert.deepEqual(screen.slice(1, 5).map((line) => line.slice(1, 5)), ['✓ a ', '  b ', '✓ c ', '✓ d ']);
+  assert.match(screen.find((line) => line.startsWith('╰')) ?? '', /─ GROUP: 3 selected ─╯/);
+  main.left.groupSelection();
+  main.left.unselect();
+  assert.deepEqual(await rows(), ['a   ', 'b   ', 'c   ', 'd   ']);
+});
+
+test('selectionCount counts the group being selected, and each entry once', () => {
+  const entries = ['a', 'b', 'c', 'd'].map((name) => ({ name, type: /** @type {const} */ ('file'), symlink: false, executable: false, size: null, mtime: null }));
+  assert.equal(selectionCount(entries, ['a', 'c'], null, 0), 2);
+  assert.equal(selectionCount(entries, ['a', 'c'], 3, 1), 4);
+  assert.equal(selectionCount(entries, [], 2, 2), 1);
 });
 
 test('a page down takes the cursor to the bottom row shown, then pages so that row becomes the top one', async (t) => {

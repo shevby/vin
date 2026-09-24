@@ -19,7 +19,7 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - Arrow keys and `hjkl` for navigation (see Panes).
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
-- `Escape` closes the window on top (a dialog, a menu), never the main window.
+- `Escape` closes the window on top (a dialog, a menu), never the main window; in a pane it unselects (see Panes).
 - `z z` quits — for now: it goes once the command line brings `:q` (6.2).
 - `ctrl+c`, `ctrl+x`, `ctrl+v` are copy, cut, and paste, as in Windows and Linux file managers — and on macOS `cmd+c`, `cmd+x`, `cmd+v` as well (2.7). `ctrl+c` doesn't quit.
 - A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
@@ -37,6 +37,14 @@ Moving around a pane, mostly as in vifm:
 - `~` — the home directory.
 - `alt+Left` (`ctrl+o`, as in vifm) / `alt+Right` — back and forward through the directories this pane has shown, as in a browser. vifm's forward key is `ctrl+i`, which terminals send as `Tab`, taken by switching panes.
 - A directory you come back to — by any of these — has the cursor where you left it.
+
+Selecting:
+
+- `v` — select or unselect the entry under the cursor, and move down. Selected entries have a `✓` in a gutter before their names (there while anything is selected) and papercolor-dark's Selected color; the pane's bottom border counts them.
+- `shift+v` — select a group: from the cursor to wherever it moves, on top of what's selected already. `shift+v` or `v` ends it, adding the group to the selection; the border says `GROUP` meanwhile.
+- `Escape` — drop the group being selected, keeping the rest; else unselect everything.
+- `ctrl+a` — select all; `*` — invert the selection.
+- Going to another directory unselects everything.
 
 Switching panes, as in vifm:
 
