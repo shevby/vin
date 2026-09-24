@@ -50,12 +50,13 @@ function isObject(value) {
  * objects and dense arrays of those. State proxies are unwrapped.
  * @param {unknown} value
  * @param {string[]} [path] Where `value` sits, for error messages.
- * @param {Set<object>} [ancestors] Objects being copied above `value`, to detect cycles.
+ * @param {{ what?: string, ancestors?: Set<object> }} [options] `what` names the value in errors (default
+ *   `State`, e.g. `Event payload`); `ancestors` are the objects being copied above `value`, to detect cycles.
  * @returns {Data}
  * @throws {TypeError} If `value` holds anything else — `undefined`, functions, class instances, `Map`,
  *   `Date`, `NaN`, holes, cycles, or a `__proto__` key.
  */
-function cloneData(value, path = [], ancestors = new Set()) {
+function cloneData(value, path = [], { what = 'State', ancestors = new Set() } = {}) {
   if (isObject(value)) {
     value = proxyTargets.get(value) ?? value;
   }
@@ -67,11 +68,11 @@ function cloneData(value, path = [], ancestors = new Set()) {
   }
   if (!isObject(value)) {
     throw new TypeError(
-      `State value at "${formatPath(path)}" is ${String(value)}; state holds only JSON data (use null, not undefined)`,
+      `${what} value at "${formatPath(path)}" is ${String(value)}; only JSON data is allowed (use null, not undefined)`,
     );
   }
   if (ancestors.has(value)) {
-    throw new TypeError(`State value at "${formatPath(path)}" is circular`);
+    throw new TypeError(`${what} value at "${formatPath(path)}" is circular`);
   }
   ancestors.add(value);
   try {
@@ -79,23 +80,23 @@ function cloneData(value, path = [], ancestors = new Set()) {
       const copy = new Array(value.length);
       for (let i = 0; i < value.length; i++) {
         if (!(i in value)) {
-          throw new TypeError(`State array at "${formatPath(path)}" has a hole at ${i}`);
+          throw new TypeError(`${what} array at "${formatPath(path)}" has a hole at ${i}`);
         }
-        copy[i] = cloneData(value[i], [...path, String(i)], ancestors);
+        copy[i] = cloneData(value[i], [...path, String(i)], { what, ancestors });
       }
       return copy;
     }
     const proto = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) {
       throw new TypeError(
-        `State value at "${formatPath(path)}" is a ${proto?.constructor?.name ?? 'non-plain'} object; state holds only plain objects and arrays`,
+        `${what} value at "${formatPath(path)}" is a ${proto?.constructor?.name ?? 'non-plain'} object; only plain objects and arrays are allowed`,
       );
     }
     /** @type {StateObject} */
     const copy = {};
     for (const key of Object.keys(value)) {
-      checkKey(key, path);
-      copy[key] = cloneData(/** @type {Record<string, unknown>} */ (value)[key], [...path, key], ancestors);
+      checkKey(key, path, what);
+      copy[key] = cloneData(/** @type {Record<string, unknown>} */ (value)[key], [...path, key], { what, ancestors });
     }
     return copy;
   } finally {
@@ -106,10 +107,11 @@ function cloneData(value, path = [], ancestors = new Set()) {
 /**
  * @param {string} key
  * @param {readonly string[]} path
+ * @param {string} [what]
  */
-function checkKey(key, path) {
+function checkKey(key, path, what = 'State') {
   if (key === '__proto__') {
-    throw new TypeError(`State key "__proto__" at "${formatPath(path)}" is reserved`);
+    throw new TypeError(`${what} key "__proto__" at "${formatPath(path)}" is reserved`);
   }
 }
 
