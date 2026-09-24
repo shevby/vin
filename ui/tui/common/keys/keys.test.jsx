@@ -73,7 +73,11 @@ test('useKeybindings sends key presses to the backend', async (t) => {
   unmount();
 });
 
-test('useKeybindings stays inactive when stdin is not a terminal', async () => {
+test('useKeybindings stays inactive when stdin is not a terminal', async (t) => {
+  const vin = new Vin();
+  await vin.init();
+  connect(createInProcessTransport(vin));
+  t.after(disconnect);
   // A pipe: Ink reports isRawModeSupported as stdin.isTTY, which is undefined here, not false.
   const stdin = new PassThrough();
   const stdout = Object.assign(new PassThrough(), { columns: 80, rows: 24 });

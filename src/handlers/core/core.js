@@ -1,13 +1,14 @@
 const Handler = require('../../handler');
 const { isChord } = require('../../keys');
 const { KeySequencer } = require('../../keymap');
-const { log } = require('../../log');
 
 /**
  * @typedef {import('../../state').Data} Data
  * @typedef {InstanceType<typeof import('../../contributions').Registry>} Registry
  * @typedef {InstanceType<typeof import('../../windows').WindowStack>} WindowStack
  * @typedef {import('../../windows').WindowInfo} WindowInfo
+ * @typedef {InstanceType<typeof import('../../messages').Messages>} Messages
+ * @typedef {import('../../messages').Message} Message
  */
 
 /**
@@ -17,8 +18,10 @@ const { log } = require('../../log');
  * - `windows` lists the open windows, bottom to top, each with its focus; the UI draws them in that order,
  *   and the top one's focus gets the keys.
  * - It runs commands (`execute`) and resolves key presses into them (`press`) for the focus; `pendingKeys`
- *   shows a sequence in progress (`g` while waiting for `g g`).
- * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string }>}
+ *   shows a sequence in progress (`g` while waiting for `g g`). A command run by a key that fails is
+ *   reported.
+ * - `messages` lists the messages to show (`src/messages.js`), until the next key press clears them.
+ * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[] }>}
  */
 class Core extends Handler {
   static kind = 'core';
@@ -44,17 +47,21 @@ class Core extends Handler {
   #windows;
   /** @type {(() => void)[]} */
   #unsubscribe = [];
+  /** @type {Messages} */
+  #messages;
   /** @type {InstanceType<typeof KeySequencer>} */
   #keys;
 
   /**
    * @param {Registry} registry
    * @param {WindowStack} windows
+   * @param {Messages} messages
    */
-  constructor(registry, windows) {
+  constructor(registry, windows, messages) {
     super('core');
     this.#registry = registry;
     this.#windows = windows;
+    this.#messages = messages;
     this.#keys = new KeySequencer({
       candidates: (focus) =>
         registry.activeKeybindings(focus, windows.top?.path).map(({ binding, command, handler, depth }) => ({
@@ -62,7 +69,7 @@ class Core extends Handler {
           depth,
           run: () => {
             handler.call(command.method, ...binding.args).catch((error) => {
-              log.error(`Keybinding "${binding.key}" → ${binding.command} on "${handler.path}" failed:`, error);
+              messages.report(error, `Keybinding "${binding.key}" → ${binding.command} on "${handler.path}" failed`);
             });
           },
         })),
@@ -76,10 +83,12 @@ class Core extends Handler {
     this.#keys.timeout = /** @type {number} */ (this.config.get('core.keyTimeout'));
     const registry = this.#registry;
     const windows = this.#windows;
+    const messages = this.#messages;
     this.update({
       contributions: Object.fromEntries(registry.points.map((point) => [point, registry.get(point)])),
       windows: windows.windows,
       pendingKeys: '',
+      messages: messages.list,
     });
     let focus = windows.focused;
     this.#unsubscribe.push(
@@ -93,6 +102,9 @@ class Core extends Handler {
           focus = windows.focused;
           this.#keys.reset();
         }
+      }),
+      messages.subscribe(() => {
+        this.state.messages = messages.list;
       }),
     );
   }
@@ -115,8 +127,9 @@ class Core extends Handler {
   }
 
   /**
-   * Handles a key press from the UI: runs the command it completes for the focus, or waits for the rest of
-   * a sequence. The command runs in the background; a failure is logged.
+   * Handles a key press from the UI: clears the messages shown — the user has had them in front of them —
+   * then runs the command the key completes for the focus, or waits for the rest of a sequence. The command
+   * runs in the background; a failure is reported as a message.
    * @param {string} chord One canonical chord (`src/keys.js`), e.g. `j`, `shift+g`, `ctrl+w`.
    * @returns {boolean} Whether a keybinding used the key — if not, the UI may handle it itself.
    * @throws {TypeError} If `chord` isn't one canonical chord.
@@ -125,7 +138,22 @@ class Core extends Handler {
     if (!isChord(chord)) {
       throw new TypeError(`"${chord}" isn't a single key in canonical notation, e.g. "j", "shift+g", "ctrl+w"`);
     }
+    this.#messages.clear();
     return this.#keys.press(chord, this.#windows.focused?.path ?? null);
+  }
+
+  /**
+   * Clears the messages the user has seen — for a UI that shows them in a way a key dismisses, like the
+   * TUI's popup, where the key does nothing else.
+   * @param {number | null} [upTo] The `id` of the last message shown; ones that came after it stay.
+   *   Default: all.
+   * @throws {TypeError} If `upTo` isn't a number or `null`.
+   */
+  clearMessages(upTo = null) {
+    if (upTo !== null && typeof upTo !== 'number') {
+      throw new TypeError(`Expected a message id, got ${JSON.stringify(upTo)}`);
+    }
+    this.#messages.clear(upTo);
   }
 
   /**

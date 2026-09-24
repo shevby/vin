@@ -195,7 +195,7 @@ class Handler {
    * disposes it; the opener's `openWindow()` then resolves with `result`. Closing a window that's already
    * closing does nothing.
    * @param {Data} [result]
-   * @returns {Promise<void>} Settles once the window is disposed; a failure there is logged, not thrown.
+   * @returns {Promise<void>} Settles once the window is disposed; a failure there is reported, not thrown.
    * @throws {Error} If this handler isn't in a window opened with `openWindow()`, or `result` isn't JSON data.
    */
   async close(result = null) {
@@ -228,6 +228,28 @@ class Handler {
    */
   get fs() {
     return this.#host('access files').fs;
+  }
+
+  /**
+   * Shows the user a message, until their next key press: `this.notify('3 files copied')`.
+   * @param {string} text
+   * @param {import('./messages').MessageLevel} [level] Default: `info`.
+   * @throws {Error} If this handler's tree isn't registered with `Vin`, or `text` or `level` is invalid.
+   */
+  notify(text, level) {
+    this.#host('show messages').messages.show(text, level);
+  }
+
+  /**
+   * Shows the user a failure this handler caught and won't throw — one from work in the background, say.
+   * An expected one (`ENOENT`, `EACCES`, …; `src/errors.js`) is put in words (`Permission denied: ~/x`);
+   * anything else is a bug, also logged with its stack. A command needn't catch anything: a failure it
+   * throws when run by a key is reported the same way.
+   * @param {unknown} error
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
+   */
+  report(error) {
+    this.#host('report errors').messages.report(error, `Handler "${this.path}" failed`);
   }
 
   /**

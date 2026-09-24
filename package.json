@@ -13,7 +13,7 @@
     "dev": "npm run build -- --watch",
     "prepare": "npm run build",
     "start": "npm run build && node index.js",
-    "test": "node --require ./test/jsx-hooks.js --test \"**/*.test.{js,jsx}\"",
+    "test": "node --require ./test/setup.js --test \"**/*.test.{js,jsx}\"",
     "typecheck": "tsc -p jsconfig.json",
     "check": "npm run typecheck && npm run build && npm test"
   },

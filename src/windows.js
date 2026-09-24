@@ -60,6 +60,17 @@ class WindowStack {
   /** @type {Set<() => void>} */
   #listeners = new Set();
   #lastId = 0;
+  /** @type {import('./messages').ErrorReporter} */
+  #report;
+
+  /**
+   * @param {object} [options]
+   * @param {import('./messages').ErrorReporter} [options.report] Gets a window's failure to dispose, which
+   *   has no caller to throw to. Default: logs it.
+   */
+  constructor({ report = (error, context) => log.error(`${context}:`, error) } = {}) {
+    this.#report = report;
+  }
 
   /**
    * The open windows, bottom to top.
@@ -117,7 +128,7 @@ class WindowStack {
     } catch (error) {
       if (window.parent === opener) {
         await opener.remove(window.name).catch((disposeError) => {
-          log.error(`Disposing window "${window.path}" after it failed to open:`, disposeError);
+          this.#report(disposeError, `Disposing window "${window.path}" after it failed to open failed`);
         });
       }
       throw error;
@@ -134,7 +145,7 @@ class WindowStack {
    * Closing a window that's already closing does nothing.
    * @param {Handler} handler
    * @param {unknown} [result] JSON data.
-   * @returns {Promise<void>} Settles once the window is disposed; a failure there is logged, not thrown.
+   * @returns {Promise<void>} Settles once the window is disposed; a failure there is reported, not thrown.
    * @throws {Error} If `handler` is in no window, only in a lasting one, or `result` isn't JSON data.
    */
   async close(handler, result = null) {
@@ -246,7 +257,7 @@ class WindowStack {
       // Disposing also closes the windows it opened (they're its sub-handlers), with null.
       await handler.parent?.remove(handler.name);
     } catch (error) {
-      log.error(`Disposing window "${path}" failed:`, error);
+      this.#report(error, `Disposing window "${path}" failed`);
     } finally {
       entry.resolve(result);
     }

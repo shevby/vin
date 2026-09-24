@@ -1,5 +1,7 @@
-import { useEffect } from 'react';
+import { Component, useEffect } from 'react';
 import { Box, Text } from 'ink';
+import { log } from '../../../../src/log.js';
+import { paths } from '../../../../src/paths.js';
 import { init, release } from '../../handler.js';
 import { useSelector } from '../store/index.js';
 
@@ -92,5 +94,48 @@ function Window({ window, components }) {
       </Box>
     );
   }
-  return <Component key={window.id} path={window.path} />;
+  return (
+    <WindowBoundary key={window.id} path={window.path}>
+      <Component path={window.path} />
+    </WindowBoundary>
+  );
+}
+
+/**
+ * Catches a window component that throws while drawing: the window shows the error in its place, and the
+ * rest of the UI carries on. Ink would otherwise exit.
+ * @extends {Component<{ path: string, children: import('react').ReactNode }, { error: unknown }>}
+ */
+class WindowBoundary extends Component {
+  /** @type {{ error: unknown }} */
+  state = { error: null };
+
+  /**
+   * @param {unknown} error
+   * @returns {{ error: unknown }}
+   */
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  /** @param {unknown} error */
+  componentDidCatch(error) {
+    log.error(`Window "${this.props.path}" failed to draw:`, error);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (error === null) {
+      return this.props.children;
+    }
+    const where = log.file ? ` — details in ${paths.display(log.file)}` : '';
+    return (
+      <Box borderStyle="round" borderColor="red" paddingX={1}>
+        <Text color="red">
+          Window "{this.props.path}" can't be drawn: {error instanceof Error ? error.message : String(error)}
+          {where}
+        </Text>
+      </Box>
+    );
+  }
 }

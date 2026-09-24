@@ -117,11 +117,10 @@ class LocalProvider {
    * @param {string} from
    * @param {string} to
    * @param {boolean} overwrite
-   * @param {string} action For errors, e.g. `rename`.
    * @returns {Promise<boolean>} Whether `to` is `from` itself — the same name in another case, on a file
    *   system that ignores case.
    */
-  async #clear(from, to, overwrite, action) {
+  async #clear(from, to, overwrite) {
     const [source, target] = await Promise.all([fs.promises.lstat(from, { bigint: true }), lstatOrNull(to)]);
     if (!target) {
       return false;
@@ -130,11 +129,11 @@ class LocalProvider {
       return true;
     }
     if (!overwrite) {
-      throw fsError('EEXIST', `file already exists, ${action} '${from}' -> '${to}'`);
+      throw fsError('EEXIST', 'Already exists', { path: from, dest: to });
     }
     const inside = nodePath.relative(to, from);
     if (!inside.startsWith('..') && !nodePath.isAbsolute(inside)) {
-      throw fsError('EINVAL', `can't replace a directory with what's inside it, ${action} '${from}' -> '${to}'`);
+      throw fsError('EINVAL', `Can't replace a directory with what's inside it`, { path: from, dest: to });
     }
     await fs.promises.rm(to, { recursive: true });
     return false;
@@ -144,7 +143,7 @@ class LocalProvider {
   async rename(fromUri, toUri, { overwrite = false } = {}) {
     const from = paths.fromUri(fromUri);
     const to = paths.fromUri(toUri);
-    await this.#clear(from, to, overwrite, 'rename');
+    await this.#clear(from, to, overwrite);
     try {
       await fs.promises.rename(from, to);
     } catch (error) {
@@ -161,8 +160,8 @@ class LocalProvider {
   async copy(fromUri, toUri, { overwrite = false } = {}) {
     const from = paths.fromUri(fromUri);
     const to = paths.fromUri(toUri);
-    if (await this.#clear(from, to, overwrite, 'copy')) {
-      throw fsError('EINVAL', `can't copy a file onto itself, copy '${from}' -> '${to}'`);
+    if (await this.#clear(from, to, overwrite)) {
+      throw fsError('EINVAL', "Can't copy a file onto itself", { path: from, dest: to });
     }
     await this.#copy(from, to);
   }

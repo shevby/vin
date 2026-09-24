@@ -132,3 +132,28 @@ test('a window of a kind with no component gets a placeholder', async (t) => {
   await vin.openWindow('mystery');
   assert.match(await frame(), /No TUI for window "mystery"\s+│\n│ \(mystery\)/, 'wrapped at 40 columns');
 });
+
+test('a window that throws while drawing shows the error in its place; the rest carries on', async (t) => {
+  const vin = new Vin();
+  vin.register(new Main());
+  await vin.init();
+  connect(createInProcessTransport(vin));
+  t.after(disconnect);
+  const Broken = () => {
+    throw new Error('boom');
+  };
+  const app = render(
+    <Box width={60} flexDirection="column">
+      <Windows components={{ main: Broken, ask: AskWindow }} />
+      <Text>still here</Text>
+    </Box>,
+  );
+  t.after(app.unmount);
+  await vin.openWindow('main');
+  await settle();
+  assert.match(app.lastFrame() ?? '', /Window "main" can't be drawn: boom[\s\S]*still here/);
+
+  vin.resolve('main.left').openWindow(new Ask('Proceed?'));
+  await settle();
+  assert.match(app.lastFrame() ?? '', /Proceed\?/, 'overlays are drawn over it');
+});
