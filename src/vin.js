@@ -1,13 +1,21 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { Registry } = require('./contributions');
 const { EventBus } = require('./events');
 const Handler = require('./handler');
+const Core = require('./handlers/core/core');
 const { setHost } = require('./host');
 const { createInProcessTransport } = require('./transport');
 const { log } = require('./log');
 
-/** Manages every handler and the event system between them, and starts the UI. */
+/**
+ * Manages every handler, the event system, and the contribution registry between them, and starts the UI.
+ * The built-in `core` handler is always registered first.
+ */
 class Vin {
+  /** @type {import('./host').Host} */
+  #host;
+
   constructor() {
     /**
      * Top-level handlers by name, in registration order.
@@ -19,6 +27,13 @@ class Vin {
      * @readonly
      */
     this.events = new EventBus();
+    /**
+     * Extension points and what handlers contribute to them; see `Handler.contributes`.
+     * @readonly
+     */
+    this.registry = new Registry();
+    this.#host = { events: this.events, attach: (handler) => this.registry.attach(handler) };
+    this.register(new Core(this.registry));
   }
 
   /**
@@ -37,7 +52,7 @@ class Vin {
       throw new Error(`Handler "${handler.name}" is already registered`);
     }
     this.handlers.set(handler.name, handler);
-    setHost(handler, { events: this.events });
+    setHost(handler, this.#host);
   }
 
   /**
@@ -69,6 +84,17 @@ class Vin {
       throw new Error(`"${path}" names no method; expected "<handler>.<method>"`);
     }
     return this.resolve(path.slice(0, dot)).call(path.slice(dot + 1), ...args);
+  }
+
+  /**
+   * Runs a command (`pane.down`) on the handler of its kind nearest to `focus`, or the only one there is.
+   * @param {string} command
+   * @param {{ focus?: string | null, surface?: 'tui' | 'cli', args?: unknown[] }} [options]
+   * @returns {Promise<unknown>}
+   * @throws {Error} If the command doesn't exist, isn't available on `surface`, or has nothing to run on.
+   */
+  execute(command, options) {
+    return this.registry.execute(command, options);
   }
 
   /**

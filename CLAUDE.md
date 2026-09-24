@@ -66,9 +66,14 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - A foreign plugin's GUI is declarative: its Handler-equivalent state, sent over JSON-RPC, is built from a fixed vocabulary of components (list, table, form field, text, progress bar, menu entry, …) that `Vin`'s own Ink/React components render — the plugin describes *what* to show, never *how*, reusing the existing `this.update(state)`/`this.state.x = y` sync as-is (see [Yazi's Lua UI API](https://yazi-rs.github.io/docs/plugins/overview/) for prior art). Two escape hatches, if the vocabulary ever proves too limited: a full-screen terminal takeover (suspend Ink, hand the plugin raw tty, restore on exit — as vifm/vim do for `$PAGER`/`$EDITOR`), or, once Electron is revisited, a sandboxed webview using `postMessage` ([VS Code's model](https://code.visualstudio.com/api/extension-guides/webview)).
   - Either way, a plugin is a separate handler with its own GUI. Core functionality is just a collection of Handlers; plugins communicate with other Handlers — and with `Vin` — through the event system.
   - Plugins can only modify existing GUI or logic through predefined **extension points** — fixed areas that expose their own contribution interface — rather than editing arbitrary GUI/logic directly. The context menu (see Controls) is one such area: plugins add entries through its interface instead of rewriting the menu itself.
+  - Contribution registry (`src/contributions.js`) — that mechanism. Named points (`commands`, `keybindings`, `contextMenu`; more can be defined) collect items, each checked by the point's normalizer, so a mistake fails with a message naming its source and field (unknown fields are errors, not ignored). A handler class declares its items as data in `static contributes` — the same shape a plugin manifest will use (4.2, 4.3) — registered while at least one instance of its kind is initialized.
+    - Kind: every handler has one — its class's `static kind`, or else its name — and a kind belongs to one class. Commands are `<kind>.<method>` (`pane.down`), so both panes share one command; it runs on the instance of that kind nearest the focused handler (itself or an ancestor), or on the only instance there is.
+    - A command declares its surfaces: `tui` (default `true`) and `cli` (default `false`).
+    - The built-in `core` handler (`src/handlers/core/`, always registered first, so the name is reserved) mirrors the registry in its state (`contributions.commands`, …) and runs commands for the UI (`core.execute(command, focus, args)`).
   - Main entry points:
     - `src/vin.js` — the `Vin` class: standalone, manages handlers and the event system, and starts the UI, connecting it to them.
     - `src/handler.js` — the `Handler` base class.
+    - `src/contributions.js` — the contribution registry; `src/events.js` — the event bus; `src/transport.js` — the UI transport.
     - `src/handlers/<handler-name>/` — sources for each Handler; sub-handlers nest the same way, e.g. `src/handlers/<handler-name>/<subhandler-name>/`.
     - `index.js` (repo root) — application entry point; creates `Vin` and starts the app.
 - UI:
@@ -136,7 +141,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.3 UI store and `useSelector` — a per-window mirror of handler state that applies patches; built on React's `useSyncExternalStore`, so only components reading a changed path re-render.
 - [x] 1.4 In-process transport and `ui/tui/handler.js` (`init(handlerName)`) — the TUI's direct proxy, using the same message shapes the JSON-RPC transport will (4.5).
 - [x] 1.5 Event system — `Vin`-level bus for events between handlers (and later plugins); subscriptions released on dispose.
-- [ ] 1.6 Contribution registry — the one extension-point mechanism for commands (with `tui`/`cli` surface flags), context-menu entries, and keybindings.
+- [x] 1.6 Contribution registry — the one extension-point mechanism for commands (with `tui`/`cli` surface flags), context-menu entries, and keybindings.
 - [ ] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
 - [ ] 1.8 TUI window manager — overlays (see Glossary) stacked over the main view, with focus and key input routed to the topmost one.
 - [ ] 1.9 Configuration — a JSON5 file in the per-OS config directory (`$XDG_CONFIG_HOME/vin`, `%APPDATA%\vin`, …), user values merged over defaults, validated with readable errors.

@@ -8,6 +8,8 @@
  * reach it through their root, so moving a handler between trees needs no bookkeeping.
  * @typedef {object} Host
  * @property {EventBus} events
+ * @property {(handler: Handler) => () => void} attach Called when a handler of the tree is initialized; returns
+ *   what to call when it is disposed.
  */
 
 /** @type {WeakMap<Handler, Host>} */

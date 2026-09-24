@@ -6,6 +6,7 @@ const { Model } = require('./state');
  * @typedef {import('./state').StateObject} StateObject
  * @typedef {import('./state').StateListener} StateListener
  * @typedef {import('./events').EventListener} EventListener
+ * @typedef {import('./contributions').Contributes} Contributes
  */
 
 /**
@@ -26,9 +27,28 @@ const { Model } = require('./state');
  * Events: `this.emit('changed', payload)` publishes `<this path>.changed` to every handler listening with
  * `this.on('main.left.changed', listener)`; listening stops when the listener's handler is disposed.
  * Both need the handler's tree to be registered with `Vin`.
+ *
+ * Contributions: a class declares its commands, keybindings, and context-menu entries in
+ * `static contributes`, registered while an instance is initialized. Commands are named after the handler's
+ * `kind` — `static kind`, or else the handler's name — so every pane shares `pane.down`, which runs on the
+ * focused one.
  * @template {StateObject} [S=StateObject]
  */
 class Handler {
+  /**
+   * What this class's handlers are, for addressing their commands (`pane.down`); defaults to the handler's
+   * name. Set it when a class has several instances (`left` and `right` are both `pane`) or its instances'
+   * names vary.
+   * @type {string | undefined}
+   */
+  static kind = undefined;
+
+  /**
+   * Commands, keybindings, and context-menu entries this class contributes; see `src/contributions.js`.
+   * @type {Contributes | undefined}
+   */
+  static contributes = undefined;
+
   #model = new Model();
   /** @type {Handler | null} */
   #parent = null;
@@ -43,6 +63,11 @@ class Handler {
    * @type {Set<() => void>}
    */
   #subscriptions = new Set();
+  /**
+   * Undoes the host's `attach()` from `init()`.
+   * @type {(() => void) | null}
+   */
+  #detach = null;
 
   /**
    * @param {string} name Unique among its siblings (or among `Vin`'s top-level handlers).
@@ -75,6 +100,14 @@ class Handler {
    */
   get path() {
     return this.#parent ? `${this.#parent.path}.${this.name}` : this.name;
+  }
+
+  /**
+   * What this handler is, for addressing its commands: its class's `static kind`, or else its name.
+   * @returns {string}
+   */
+  get kind() {
+    return /** @type {typeof Handler} */ (this.constructor).kind ?? this.name;
   }
 
   /**
@@ -283,6 +316,8 @@ class Handler {
     if (this.#disposing) {
       throw new Error(`Cannot initialize disposed handler "${this.path}"`);
     }
+    // Registers the class's contributions (for the first handler of its kind), so they exist during onInit().
+    this.#detach = getHost(this)?.attach(this) ?? null;
     await this.onInit();
     for (const child of this.#children.values()) {
       await child.init();
@@ -318,6 +353,8 @@ class Handler {
       off();
     }
     this.#subscriptions.clear();
+    this.#detach?.();
+    this.#detach = null;
     this.#model.flush();
     this.#model.clear();
     if (errors.length === 1) {

@@ -106,7 +106,7 @@ test('call refuses anything but public subclass methods', async () => {
   const refused = [
     '_helper', 'cwd', 'name', 'events', 'constructor', 'toString', 'hasOwnProperty',
     'init', 'dispose', 'add', 'remove', 'resolve', 'call', 'onInit', 'onDispose', 'missing',
-    'state', 'update', 'subscribeState', 'emit', 'on',
+    'state', 'update', 'subscribeState', 'emit', 'on', 'kind',
   ];
   for (const method of refused) {
     await assert.rejects(main.call(`left.${method}`), /no callable method/, method);
