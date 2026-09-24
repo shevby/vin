@@ -26,6 +26,17 @@ const { opener } = require('../../../open');
  */
 
 /**
+ * @typedef {object} PaneState
+ * @property {string} uri The directory shown.
+ * @property {Status} status
+ * @property {Entry[]} entries
+ * @property {number} cursor
+ * @property {string[]} selected Names selected, in listing order — without the group range's.
+ * @property {number | null} range While selecting a group, the entry it started at; the range spans from
+ *   there to the cursor.
+ */
+
+/**
  * How a listing ended: shown, failed (and reported), or dropped for a newer one — or for disposal.
  * @typedef {'listed' | 'failed' | 'superseded'} Outcome
  */
@@ -85,7 +96,13 @@ function canonical(uri) {
  *
  * Moving to another directory keeps the current listing until the new one is read, so one that can't be
  * (no permission, gone) is reported and the pane stays where it was.
- * @extends {Handler<{ uri: string, status: Status, entries: Entry[], cursor: number }>}
+ *
+ * Entries are selected (2.6) one at a time (`toggleSelection`), or as a group: `groupSelection` anchors a
+ * range at the cursor (`range`), which then spans to wherever the cursor goes, on top of what's selected
+ * already, until either command ends it and adds it to the selection (`selected`, by name, in listing
+ * order). Another directory clears the selection; operations act on it, or on the entry under the cursor
+ * when there is none (`targets`).
+ * @extends {Handler<PaneState>}
  */
 class Pane extends Handler {
   static kind = 'pane';
@@ -108,6 +125,11 @@ class Pane extends Handler {
       { method: 'back', title: 'Go back', description: 'To the directory shown before, in this pane' },
       { method: 'forward', title: 'Go forward', description: 'To the directory left by going back' },
       { method: 'navigate', title: 'Go to a directory', description: 'Shows the directory at a path or URI' },
+      { method: 'toggleSelection', title: 'Select or unselect', description: 'Selects or unselects the entry under the cursor and moves down; while selecting a group, ends it' },
+      { method: 'groupSelection', title: 'Select a group', description: 'Selects from here to wherever the cursor goes, until pressed again' },
+      { method: 'unselect', title: 'Unselect', description: 'Drops the group being selected, or else the whole selection' },
+      { method: 'selectAll', title: 'Select all' },
+      { method: 'invertSelection', title: 'Invert the selection' },
     ],
     keybindings: [
       { key: 'up', command: 'pane.up' },
@@ -135,6 +157,11 @@ class Pane extends Handler {
       { key: 'alt+left', command: 'pane.back' },
       { key: 'ctrl+o', command: 'pane.back' },
       { key: 'alt+right', command: 'pane.forward' },
+      { key: 'v', command: 'pane.toggleSelection' },
+      { key: 'shift+v', command: 'pane.groupSelection' },
+      { key: 'escape', command: 'pane.unselect' },
+      { key: 'ctrl+a', command: 'pane.selectAll' },
+      { key: '*', command: 'pane.invertSelection' },
     ],
     // papercolor-dark, from vifm-colors; see src/colors.js.
     colors: [
@@ -149,6 +176,7 @@ class Pane extends Handler {
       { key: 'fifo', default: { fg: 74 }, description: 'Named pipes (vifm: Fifo).' },
       { key: 'socket', default: { fg: 140, bold: true }, description: 'Sockets (vifm: Socket).' },
       { key: 'device', default: { fg: 125 }, description: 'Block and character devices (vifm: Device).' },
+      { key: 'selected', default: { fg: 173, bg: 235, bold: true }, description: 'Selected entries (vifm: Selected).' },
     ],
   };
 
@@ -184,7 +212,7 @@ class Pane extends Handler {
   }
 
   onInit() {
-    this.update({ uri: this.#uri, status: 'loading', entries: [], cursor: 0 });
+    this.update({ uri: this.#uri, status: 'loading', entries: [], cursor: 0, selected: [], range: null });
     this.#history = [this.#uri];
     this.#index = 0;
     // Not awaited: vin starts while the directory is read.
@@ -333,6 +361,98 @@ class Pane extends Handler {
   }
 
   /**
+   * Selects or unselects the entry under the cursor, then moves down; while selecting a group, ends it
+   * instead, adding it to the selection.
+   */
+  toggleSelection() {
+    const { entries, cursor, range, selected } = this.state;
+    if (range !== null) {
+      this.#select(this.#selectedNames());
+      return;
+    }
+    const name = entries[cursor]?.name;
+    if (name === undefined) {
+      return;
+    }
+    const names = new Set(selected);
+    if (!names.delete(name)) {
+      names.add(name);
+    }
+    this.#select(names);
+    this.#move(cursor + 1);
+  }
+
+  /**
+   * Starts selecting a group at the cursor — from there to wherever the cursor goes, on top of what's
+   * selected already; or, while selecting one, ends it, adding it to the selection.
+   */
+  groupSelection() {
+    const { entries, cursor, range } = this.state;
+    if (range !== null) {
+      this.#select(this.#selectedNames());
+    } else if (entries.length) {
+      this.state.range = cursor;
+    }
+  }
+
+  /** Drops the group being selected; else, unselects everything. */
+  unselect() {
+    if (this.state.range !== null) {
+      this.state.range = null;
+    } else if (this.state.selected.length) {
+      this.state.selected = [];
+    }
+  }
+
+  selectAll() {
+    this.#select(this.state.entries.map((entry) => entry.name));
+  }
+
+  /** Selects what isn't selected, and unselects what is — a group being selected included, which ends. */
+  invertSelection() {
+    const selected = this.#selectedNames();
+    this.#select(this.state.entries.filter((entry) => !selected.has(entry.name)).map((entry) => entry.name));
+  }
+
+  /**
+   * What an operation acts on (2.7): the entries selected — with the group being selected — or else the
+   * one under the cursor.
+   * @returns {string[]} Names, in listing order; none in an empty directory.
+   */
+  get targets() {
+    const selected = this.#selectedNames();
+    const { entries, cursor } = this.state;
+    if (selected.size) {
+      return entries.filter((entry) => selected.has(entry.name)).map((entry) => entry.name);
+    }
+    return entries[cursor] ? [entries[cursor].name] : [];
+  }
+
+  /**
+   * @returns {Set<string>} The names selected, with the group being selected.
+   */
+  #selectedNames() {
+    const { entries, cursor, range, selected } = this.state;
+    const names = new Set(selected);
+    if (range !== null) {
+      for (let i = Math.min(range, cursor); i <= Math.max(range, cursor); i++) {
+        names.add(entries[i].name);
+      }
+    }
+    return names;
+  }
+
+  /**
+   * Makes these names the selection, in listing order, ending any group being selected.
+   * @param {Iterable<string>} names
+   */
+  #select(names) {
+    const set = new Set(names);
+    const selected = this.state.entries.filter((entry) => set.has(entry.name)).map((entry) => entry.name);
+    Object.assign(this.state, { selected, range: null });
+  }
+
+  /**
    * Puts the cursor on an entry, kept within the listing.
    * @param {number} index
    */
@@ -423,7 +543,10 @@ class Pane extends Handler {
     this.#remember();
     const name = focus ?? this.#positions.get(uri) ?? null;
     const cursor = name === null ? 0 : Math.max(0, entries.findIndex((entry) => entry.name === name));
-    Object.assign(this.state, { uri, status: 'ready', entries, cursor });
+    // The same directory again keeps what's still there selected.
+    const kept = new Set(uri === this.state.uri ? this.state.selected : []);
+    const selected = entries.filter((entry) => kept.has(entry.name)).map((entry) => entry.name);
+    Object.assign(this.state, { uri, status: 'ready', entries, cursor, selected, range: null });
     this.#details = this.#fetchDetails(uri, entries, current);
     return 'listed';
   }

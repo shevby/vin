@@ -146,6 +146,67 @@ test('open opens a file with the default app, reporting a failure when it comes;
   assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'd')));
 });
 
+test('entries are selected one by one and as groups, which add to the selection', async (t) => {
+  const dir = tempDir(t, Object.fromEntries(['a', 'b', 'c', 'd', 'e', 'f'].map((name) => [name, ''])));
+  const { pane } = await open(dir);
+  await pane.loaded;
+  assert.deepEqual(pane.targets, ['a'], 'nothing selected: the entry under the cursor');
+  pane.toggleSelection();
+  pane.down();
+  pane.toggleSelection();
+  assert.deepEqual(pane.state.selected, ['a', 'c']);
+  assert.equal(current(pane), 'd', 'each moves down');
+  pane.up();
+  pane.toggleSelection();
+  assert.deepEqual(pane.state.selected, ['a'], 'again: unselected');
+
+  pane.last();
+  pane.groupSelection();
+  assert.equal(pane.state.range, 5);
+  pane.up();
+  pane.up();
+  assert.deepEqual(pane.targets, ['a', 'd', 'e', 'f'], 'the group, on top of the selection');
+  assert.deepEqual(pane.state.selected, ['a'], 'not added yet');
+  pane.groupSelection();
+  assert.deepEqual([pane.state.selected, pane.state.range], [['a', 'd', 'e', 'f'], null], 'V ends it');
+
+  pane.first();
+  pane.down();
+  pane.groupSelection();
+  pane.down();
+  pane.toggleSelection();
+  assert.deepEqual([pane.state.selected, pane.state.range], [['a', 'b', 'c', 'd', 'e', 'f'], null], 'so does v');
+  assert.equal(current(pane), 'c', "ending a group doesn't move");
+
+  pane.unselect();
+  assert.deepEqual(pane.state.selected, [], 'Escape: unselects');
+  pane.toggleSelection();
+  pane.groupSelection();
+  pane.down();
+  pane.unselect();
+  assert.deepEqual([pane.state.selected, pane.state.range], [['c'], null], 'Escape: drops the group only');
+  pane.invertSelection();
+  assert.deepEqual(pane.state.selected, ['a', 'b', 'd', 'e', 'f']);
+  pane.selectAll();
+  assert.equal(pane.state.selected.length, 6);
+});
+
+test('the selection stays through a reload of the directory, and goes with another one', async (t) => {
+  const dir = tempDir(t, { a: null, b: '', c: '' });
+  const { pane } = await open(dir);
+  await pane.loaded;
+  pane.selectAll();
+  fs.rmSync(path.join(dir, 'c'));
+  await pane.navigate('.');
+  assert.deepEqual(pane.state.selected, ['a', 'b'], 'what is still there');
+  pane.first();
+  await pane.open();
+  assert.deepEqual(pane.state.selected, []);
+  pane.groupSelection();
+  await pane.toParent();
+  assert.deepEqual([pane.state.selected, pane.state.range], [[], null]);
+});
+
 test('open enters a directory, and parent comes back with the cursor on it', async (t) => {
   const dir = tempDir(t, { a: null, b: null, 'f.txt': '' });
   fs.writeFileSync(path.join(dir, 'b', 'inner.txt'), '');

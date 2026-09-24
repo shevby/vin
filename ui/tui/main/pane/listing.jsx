@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { Box, Text, useBoxMetrics } from 'ink';
 import { formatSize, formatTime } from '../../../../src/format.js';
 import { useLineStyle, useStyle } from '../../common/theme/index.js';
@@ -12,6 +12,9 @@ import { useLineStyle, useStyle } from '../../common/theme/index.js';
 /** Cells of the size and modified columns (`src/format.js`), each after a space. */
 const SIZE_WIDTH = 6;
 const TIME_WIDTH = 12;
+/** What marks a selected entry, in the gutter shown while anything is. */
+const CHECK = '✓';
+
 /** Cells a name keeps before a narrow pane drops the modified column, then the size one. */
 const MIN_NAME = 16;
 
@@ -94,22 +97,25 @@ function printable(name) {
 /**
  * One entry, full width, in its type's color, over the cursor's where it is. A name too long for the row is
  * cut at the end, keeping its marker. A drive in the list of drives shows its free space as its size, and
- * no time.
+ * no time. While anything is selected, a gutter before the name has a check on the rows selected.
  * @param {object} props
  * @param {Entry} props.entry
  * @param {number} props.width
  * @param {boolean} props.showSize
  * @param {boolean} props.showTime
  * @param {string | null} props.cursor The cursor's color group, if it's on this row.
+ * @param {boolean} props.selected
+ * @param {boolean} props.gutter Whether to leave room for the check.
  * @param {number} props.year This year, for the modified column.
  */
-function Row({ entry, width, showSize, showTime, cursor, year }) {
-  const { backgroundColor, ...text } = useLineStyle([group(entry), cursor]);
+function Row({ entry, width, showSize, showTime, cursor, selected, gutter, year }) {
+  const { backgroundColor, ...text } = useLineStyle([group(entry), selected ? 'pane.selected' : null, cursor]);
   const size = entry.free !== undefined ? formatSize(entry.free)
     : entry.size === null || entry.type === 'directory' ? '' : formatSize(entry.size);
   const time = entry.mtime === null || entry.free !== undefined ? '' : formatTime(entry.mtime, year);
   return (
     <Box width={width} flexShrink={0} backgroundColor={backgroundColor}>
+      {gutter && <Text {...text}>{selected ? `${CHECK} ` : '  '}</Text>}
       <Box flexShrink={1}>
         <Text {...text} wrap="truncate-end">
           {printable(entry.name)}
@@ -139,12 +145,15 @@ const MemoRow = memo(Row);
  * @param {object} props
  * @param {Entry[]} props.entries
  * @param {number} props.cursor
+ * @param {string[]} props.selected Names, without the group range's.
+ * @param {number | null} props.range Where the group being selected starts, if one is; it ends at the
+ *   cursor.
  * @param {Status} props.status
  * @param {boolean} props.active Whether the pane is active: its cursor is `pane.cursorActive`, the other's
  *   `pane.cursor`.
  * @param {(rows: number) => void} [props.onHeight] Called with the rows that fit, whenever that changes.
  */
-export function Listing({ entries, cursor, status, active, onHeight }) {
+export function Listing({ entries, cursor, selected, range, status, active, onHeight }) {
   const ref = useRef(null);
   const { width, height } = useBoxMetrics(ref);
   useEffect(() => {
@@ -159,6 +168,10 @@ export function Listing({ entries, cursor, status, active, onHeight }) {
   const { size: showSize, time: showTime } = columnsFor(width);
   const year = new Date().getFullYear();
   const cursorGroup = active ? 'pane.cursorActive' : 'pane.cursor';
+  const names = useMemo(() => new Set(selected), [selected]);
+  const gutter = names.size > 0 || range !== null;
+  /** @param {number} index */
+  const inRange = (index) => range !== null && index >= Math.min(range, cursor) && index <= Math.max(range, cursor);
   return (
     <Box ref={ref} flexGrow={1} flexDirection="column" overflow="hidden">
       {status === 'loading' && <Text {...hint}>Loading…</Text>}
@@ -171,6 +184,8 @@ export function Listing({ entries, cursor, status, active, onHeight }) {
           showSize={showSize}
           showTime={showTime}
           cursor={top + i === cursor ? cursorGroup : null}
+          selected={names.has(entry.name) || inRange(top + i)}
+          gutter={gutter}
           year={year}
         />
       ))}

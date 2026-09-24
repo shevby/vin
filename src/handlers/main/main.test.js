@@ -147,3 +147,23 @@ test('Enter and Right open a file; l, bound to pane.enter in the config, only en
   await press('l');
   assert.deepEqual(opened, [path.join(dir, 'f'), path.join(dir, 'f')]);
 });
+
+test('v selects and moves down, shift+v selects a group until v or shift+v, Escape unselects', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vin-main-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const name of ['a', 'b', 'c', 'd']) {
+    fs.writeFileSync(path.join(dir, name), '');
+  }
+  const { main, press, focus } = await open(undefined, { left: paths.toUri(dir) });
+  const pane = main.left;
+  await pane.loaded;
+  await press('v v');
+  assert.deepEqual(pane.state.selected, ['a', 'b']);
+  await press('shift+v j v');
+  assert.deepEqual(pane.state.selected, ['a', 'b', 'c', 'd']);
+  await press('escape');
+  assert.deepEqual(pane.state.selected, []);
+  await press('ctrl+a *');
+  assert.deepEqual(pane.state.selected, []);
+  assert.equal(focus(), 'main.left', 'Escape leaves the main window open');
+});
