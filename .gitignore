@@ -4,3 +4,4 @@ dist/
 .env
 WILL.md
 /config.json5
+/.vin/

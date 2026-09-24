@@ -17,7 +17,7 @@ const windows = new Paths({ platform: 'win32', home: 'C:\\Users\\me' });
  * A logger that remembers what it was given.
  * @param {string | null} [file]
  */
-function fakeLog(file = 'C:\\Users\\me\\vin\\vin.log') {
+function fakeLog(file = 'C:\\Users\\me\\vin\\.vin\\vin.log') {
   /** @type {[string, unknown[]][]} */
   const lines = [];
   /** @param {string} level */
@@ -74,7 +74,7 @@ test('reports expected failures in words, and bugs as unexpected, logged with th
 
   assert.deepEqual(messages.list.map(({ level, text }) => ({ level, text })), [
     { level: 'error', text: 'Permission denied: ~/x' },
-    { level: 'error', text: 'Unexpected error: x is not a function — details in ~/vin/vin.log' },
+    { level: 'error', text: 'Unexpected error: x is not a function — details in ~/vin/.vin/vin.log' },
   ]);
   assert.deepEqual(log.lines, [
     ['debug', ['Opening failed:', denied]],
