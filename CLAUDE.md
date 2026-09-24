@@ -15,7 +15,9 @@ A vifm-inspired terminal file manager with support for network protocols and use
 1. **Node.js 24 LTS** — plain JavaScript, no TypeScript.
    - Backend (`src/`, native plugins, root `index.js`): CommonJS — `require()`, not `import`.
    - Frontend (`ui/`): ESM — `import`. Ink 7 and its `yoga-layout` dependency use top-level `await`, so they can't be `require()`d; `ui/package.json` sets `"type": "module"`. The backend crosses into the UI with a single dynamic `import()`, and the UI can `import` backend CommonJS modules directly. In ESM files, relative imports include the file extension (`'../../src/vin.js'`).
-   - Components use real JSX in `.jsx` files. [esbuild](https://esbuild.github.io/) bundles `ui/tui/index.jsx` into `dist/tui.mjs` (git-ignored), leaving `node_modules` packages external; `Vin` loads that bundle. `npm install` builds it too (the `prepare` script), so after a fresh clone `node index.js` or `npm link` gives a working `vin`; `npm start` builds first; `npm run dev` rebuilds on change.
+   - Components use real JSX in `.jsx` files. [esbuild](https://esbuild.github.io/) bundles `ui/tui/index.jsx` into `dist/tui.mjs` (git-ignored), leaving `node_modules` packages external; `Vin` loads that bundle.
+     - Backend modules the UI imports (e.g. `src/log.js`) are bundled in as CommonJS, so the bundle's banner defines `require` with `createRequire` — without it their `require('node:fs')` fails at startup. `ui/tui/bundle.test.js` loads the bundle as plain ESM to catch that; `node -e` can't, since its global `require` hides the problem.
+     - Those bundled modules are separate copies from the ones `Vin` `require()`s, so the UI must never rely on module-level state shared with the backend (an instance registry, a `WeakMap`, `instanceof` a backend class) — backend objects reach the UI only through `start(transport)`. `npm install` builds it too (the `prepare` script), so after a fresh clone `node index.js` or `npm link` gives a working `vin`; `npm start` builds first; `npm run dev` rebuilds on change.
    - Tests use the built-in runner (`npm test` → `node --test`); test files sit next to the code they test as `*.test.js`, or `*.test.jsx` for UI components (rendered with [ink-testing-library](https://github.com/vadimdemedes/ink-testing-library)). `test/jsx-hooks.js` transpiles `.jsx` on load with esbuild, since Node can't parse JSX.
 2. **[Ink](https://github.com/vadimdemedes/ink)** for the TUI — React for interactive command-line apps. A directory with thousands of entries is windowed (only visible rows mounted), never rendered as one giant list — Ink itself renders at a throttled ~32 FPS and runs 50MB+ of RAM, so pagination matters more than the FPS cap.
 3. **Electron + React** — out of scope for now. Kept in mind as a possible future GUI, reusing the same component patterns as the Ink TUI.
@@ -115,7 +117,7 @@ Keybindings live in [CONTROLS.md](CONTROLS.md), kept separate since they're not 
 
 - Local only — no `git push`.
 - A separate branch per feature/fix.
-- Run `npm run check` (typecheck + tests) before merging into `master`.
+- Run `npm run check` (typecheck + build + tests) before merging into `master`.
 - A bug fix should add a test covering the regression it fixes, when that's reasonable and doesn't take too long — not a hard requirement.
 - Never delete branches or squash commits.
 
