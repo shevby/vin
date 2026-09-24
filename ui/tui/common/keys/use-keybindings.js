@@ -12,7 +12,8 @@ import { toChord } from './to-chord.js';
  *   the keyboard.
  */
 export function useKeybindings(focus, { isActive = true } = {}) {
-  // Without a TTY (piped stdin) there are no key presses, and Ink would throw enabling raw mode.
+  // Without a TTY (piped stdin) there are no key presses, and Ink would throw enabling raw mode. Ink
+  // reports support as stdin.isTTY — undefined for a pipe — and only an explicit false disables useInput.
   const { isRawModeSupported } = useStdin();
   useInput(
     (input, key) => {
@@ -23,6 +24,6 @@ export function useKeybindings(focus, { isActive = true } = {}) {
           .catch((/** @type {unknown} */ error) => log.error(`Key "${chord}" failed:`, error));
       }
     },
-    { isActive: isActive && isRawModeSupported },
+    { isActive: isActive && isRawModeSupported === true },
   );
 }

@@ -72,6 +72,10 @@ A vifm-inspired terminal file manager with support for network protocols and use
     - Kind: every handler has one — its class's `static kind`, or else its name — and a kind belongs to one class. Commands are `<kind>.<method>` (`pane.down`), so both panes share one command; it runs on the instance of that kind nearest the focused handler (itself or an ancestor), or on the only instance there is.
     - A command declares its surfaces: `tui` (default `true`) and `cli` (default `false`).
     - The built-in `core` handler (`src/handlers/core/`, always registered first, so the name is reserved) mirrors the registry in its state (`contributions.commands`, …) and runs commands for the UI (`core.execute(command, focus, args)`).
+  - Keybindings — `{ key, command, args?, mode? }` contributions, in VS Code-style notation (`src/keys.js`; see [CONTROLS.md](CONTROLS.md)). Matching runs in the backend: the UI turns each key into a canonical chord and sends it with the focused handler's path (`core.press(chord, focus)`, via `useKeybindings(focus)` in `ui/tui/common/keys/`), so a future GUI gets the same behavior.
+    - Scope: a binding is active while a handler of its command's kind is on the focus chain — the focused handler, its ancestors, then `core` (so `core.*` bindings are global) — and that handler is in the binding's `mode` (its `state.mode`, or `normal`). The deepest match wins, so a pane's `j` shadows the main window's; among equals, the last contributed.
+    - Sequences (`g g`, `ctrl+w h`) wait up to 1 s for the next key, like vifm's `timeoutlen`; a binding that is also the prefix of a longer one fires when the wait runs out. `core`'s `pendingKeys` state shows a sequence in progress.
+    - User remapping: user config contributes with `{ user: true }` — applied after every other source, and allowed to remove bindings (`{ key?, command: '-pane.down' }`). The config file itself is 1.9.
   - Main entry points:
     - `src/vin.js` — the `Vin` class: standalone, manages handlers and the event system, and starts the UI, connecting it to them.
     - `src/handler.js` — the `Handler` base class.
@@ -144,12 +148,13 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.4 In-process transport and `ui/tui/handler.js` (`init(handlerName)`) — the TUI's direct proxy, using the same message shapes the JSON-RPC transport will (4.5).
 - [x] 1.5 Event system — `Vin`-level bus for events between handlers (and later plugins); subscriptions released on dispose.
 - [x] 1.6 Contribution registry — the one extension-point mechanism for commands (with `tui`/`cli` surface flags), context-menu entries, and keybindings.
-- [ ] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
+- [x] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
 - [ ] 1.8 TUI window manager — overlays (see Glossary) stacked over the main view, with focus and key input routed to the topmost one.
 - [ ] 1.9 Configuration — a JSON5 file in the per-OS config directory (`$XDG_CONFIG_HOME/vin`, `%APPDATA%\vin`, …), user values merged over defaults, validated with readable errors.
 - [ ] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays the native form.
 - [ ] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
 - [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
+- [ ] 1.13 Function keys in the TUI — Ink's `useInput` recognizes `f1`–`f12` but passes them on with no name, so they can be bound (1.7) but never pressed; read them from Ink's raw input (or the kitty keyboard protocol) instead. *(proposed)*
 
 ### 2. Local file manager (MVP)
 
@@ -171,6 +176,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [ ] 2.16 Help window — generated from the contribution registry, so plugin keys and commands appear automatically.
 - [ ] 2.17 Session state — restore each pane's directory and view options on start; a `--choose-dir`-style option (vifm has one) so a shell function can `cd` to vin's last directory on exit.
 - [ ] 2.18 Startup paths — `vin [left-path] [right-path]` opens the panes there, as vifm does.
+- [ ] 2.19 Counts — a number before a key sequence (`5j`, `3dd`) repeats the command or is passed to it, as in vifm; needs the key sequencer (1.7) to collect digits and bindings to say whether they take a count. *(proposed)*
 
 ### 3. Context menu and CLI
 

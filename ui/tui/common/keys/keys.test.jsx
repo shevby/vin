@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Text } from 'ink';
+import { PassThrough } from 'node:stream';
+import { Text, render as renderInk } from 'ink';
 import { render } from 'ink-testing-library';
 import Vin from '../../../../src/vin.js';
 import Handler from '../../../../src/handler.js';
@@ -69,4 +70,24 @@ test('useKeybindings sends key presses to the backend', async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(calls, ['pane']);
   unmount();
+});
+
+test('useKeybindings stays inactive when stdin is not a terminal', async () => {
+  // A pipe: Ink reports isRawModeSupported as stdin.isTTY, which is undefined here, not false.
+  const stdin = new PassThrough();
+  const stdout = Object.assign(new PassThrough(), { columns: 80, rows: 24 });
+  const Window = () => {
+    useKeybindings(null);
+    return <Text>piped</Text>;
+  };
+  const instance = renderInk(<Window />, {
+    stdin: /** @type {any} */ (stdin),
+    stdout: /** @type {any} */ (stdout),
+    stderr: /** @type {any} */ (stdout),
+    patchConsole: false,
+    exitOnCtrlC: false,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  instance.unmount();
+  await instance.waitUntilExit();
 });
