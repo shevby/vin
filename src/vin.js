@@ -190,13 +190,15 @@ class Vin {
 
   /**
    * Loads the config file, initializes the handlers, and checks the config against the options they declare
-   * (creating the file, listing them, if there's none); then loads the built TUI (`npm run build`) and runs
-   * it until it exits, and disposes the handlers. While the UI runs, an uncaught exception or unhandled
-   * rejection is reported as a message instead of ending the process.
+   * (creating the file, listing them, if there's none); then opens `window`, loads the built TUI
+   * (`npm run build`) and runs it until it exits, and disposes the handlers. While the UI runs, an uncaught
+   * exception or unhandled rejection is reported as a message instead of ending the process.
+   * @param {object} [options]
+   * @param {string} [options.window] The registered handler to open as the main window, if any.
    * @returns {Promise<void>}
    * @throws {import('./config').ConfigError} If the config file has mistakes — before the UI starts.
    */
-  async start() {
+  async start({ window } = {}) {
     let failed = true;
     try {
       const exists = this.config.load(this.configFile);
@@ -205,6 +207,9 @@ class Vin {
         this.config.create(this.configFile);
       }
       this.config.check();
+      if (window !== undefined) {
+        await this.openWindow(window);
+      }
       // The UI is ESM (Ink can't be require()d), so this is the one dynamic import across the boundary.
       const entry = pathToFileURL(path.join(__dirname, '..', 'dist', 'tui.mjs')).href;
       /** @type {{ start(transport: import('./transport').Transport): Promise<void> }} */

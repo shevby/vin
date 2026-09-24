@@ -106,13 +106,10 @@ function describeError(error, paths = defaultPaths) {
  * @returns {string}
  */
 function showLocation(location, paths) {
+  if (/^file:|^[a-z][a-z\d+.-]*:\/\//i.test(location)) {
+    return paths.displayUri(location);
+  }
   try {
-    if (/^file:/i.test(location)) {
-      return paths.display(paths.fromUri(location));
-    }
-    if (/^[a-z][a-z\d+.-]*:\/\//i.test(location)) {
-      return location;
-    }
     return paths.display(paths.resolve(location));
   } catch {
     // Not a path these rules read — shown as the error gave it.

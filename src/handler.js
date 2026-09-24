@@ -205,8 +205,9 @@ class Handler {
   /**
    * Takes the focus within this handler's window, so keys go to it first, then to its ancestors up to the
    * window's handler. If the window is covered, the focus takes effect once the window is on top again.
-   * Called from a window's `onInit()` (on a sub-handler), it picks the focus the window opens with.
-   * @throws {Error} If this handler isn't in an open window, or one being opened.
+   * Called before its window opens — on a sub-handler, from the window's `onInit()` — it picks the focus
+   * the window opens with.
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
    */
   focus() {
     this.#host('take the focus').windows.focus(this);
