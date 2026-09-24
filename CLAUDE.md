@@ -7,7 +7,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
 1. **Node.js 24 LTS** — plain JavaScript, no TypeScript.
    - Backend (`src/`, native plugins, root `index.js`): CommonJS — `require()`, not `import`.
    - Frontend (`ui/`): ESM — `import`. Ink 7 and its `yoga-layout` dependency use top-level `await`, so they can't be `require()`d; `ui/package.json` sets `"type": "module"`. The backend crosses into the UI with a single dynamic `import()`, and the UI can `import` backend CommonJS modules directly. In ESM files, relative imports include the file extension (`'../../src/vin.js'`).
-   - Components use real JSX in `.jsx` files. [esbuild](https://esbuild.github.io/) bundles `ui/tui/index.jsx` into `dist/tui.mjs` (git-ignored), leaving `node_modules` packages external; `Vin` loads that bundle. `npm start` builds first; `npm run dev` rebuilds on change.
+   - Components use real JSX in `.jsx` files. [esbuild](https://esbuild.github.io/) bundles `ui/tui/index.jsx` into `dist/tui.mjs` (git-ignored), leaving `node_modules` packages external; `Vin` loads that bundle. `npm install` builds it too (the `prepare` script), so after a fresh clone `node index.js` or `npm link` gives a working `vin`; `npm start` builds first; `npm run dev` rebuilds on change.
    - Tests use the built-in runner (`npm test` → `node --test`); test files sit next to the code they test as `*.test.js`, or `*.test.jsx` for UI components (rendered with [ink-testing-library](https://github.com/vadimdemedes/ink-testing-library)). `test/jsx-hooks.js` transpiles `.jsx` on load with esbuild, since Node can't parse JSX.
 2. **[Ink](https://github.com/vadimdemedes/ink)** for the TUI — React for interactive command-line apps. A directory with thousands of entries is windowed (only visible rows mounted), never rendered as one giant list — Ink itself renders at a throttled ~32 FPS and runs 50MB+ of RAM, so pagination matters more than the FPS cap.
 3. **Electron + React** — out of scope for now. Kept in mind as a possible future GUI, reusing the same component patterns as the Ink TUI.
@@ -110,7 +110,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 0.4 JSDoc, `jsconfig.json`, and `@types/*` for VS Code autocompletion.
 - [x] 0.5 `npm run typecheck` — TypeScript as a dev-only checker of the JSDoc types (`tsc --noEmit`; code stays plain JS); run it with the tests before merging.
 - [x] 0.6 Tests for `.jsx` components — a module hook transpiles JSX on load; ink-testing-library 4 works with Ink 7.
-- [ ] 0.7 `prepare` script that builds `dist/` (it's git-ignored), so a fresh `npm install` + `npm link` gives a working global `vin`.
+- [x] 0.7 `prepare` script that builds `dist/` (it's git-ignored), so a fresh `npm install` + `npm link` gives a working global `vin`.
 - [ ] 0.8 Debug log file — stdout/stderr belong to Ink while the TUI runs.
 
 ### 1. Core architecture
