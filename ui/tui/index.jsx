@@ -1,18 +1,7 @@
-import { render, Box, Text } from 'ink';
+import { render } from 'ink';
+import { App } from './app.jsx';
 
 /** @typedef {import('../../src/vin.js')} Vin */
-
-/**
- * Root TUI component.
- * @param {{ vin: Vin }} props
- */
-function App({ vin }) {
-  return (
-    <Box borderStyle="round" paddingX={1}>
-      <Text>vin — press Ctrl+C to quit</Text>
-    </Box>
-  );
-}
 
 /**
  * Renders the TUI and resolves once it exits.
