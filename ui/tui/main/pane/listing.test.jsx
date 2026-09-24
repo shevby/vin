@@ -132,3 +132,20 @@ test('the cursor line is inverse in the active pane, dimmed in the other, in the
   assert.ok(row.includes('\x1b[48;5;235m'));
   assert.ok(row.includes('\x1b[38;5;74m'));
 });
+
+test('a page down takes the cursor to the bottom row shown, then pages so that row becomes the top one', async (t) => {
+  const dir = tempDir(t, Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`f${i}`, ''])));
+  const { main, lines } = await setup(t, dir);
+  /** @returns {Promise<string[]>} The left pane's names, top to bottom. */
+  const names = async () => (await lines()).map((line) => /^│(f\d+)/.exec(line)?.[1]).filter((name) => name !== undefined);
+  const shown = await names();
+  const rows = shown.length;
+  main.left.pageDown();
+  assert.deepEqual(await names(), shown, 'no scrolling yet');
+  assert.equal(main.left.state.cursor, rows - 1);
+  main.left.pageDown();
+  const next = await names();
+  assert.equal(next[0], `f${rows - 1}`);
+  assert.equal(next.at(-1), `f${2 * rows - 2}`);
+  assert.equal(main.left.state.cursor, 2 * rows - 2);
+});

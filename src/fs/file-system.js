@@ -9,6 +9,8 @@
  * `ENOTEMPTY`, `EACCES`, `EPERM`, `EBUSY`, `EXDEV` — whatever the protocol, so callers handle them once.
  */
 
+const { paths } = require('../paths');
+
 /**
  * `device` is a block or character device; `other` is anything else, where a protocol can't say more;
  * `unknown` is a symlink whose target is missing or unreadable.
@@ -102,6 +104,39 @@ function fsError(code, reason, where = {}) {
  */
 function childUri(uri, name) {
   return `${uri.endsWith('/') ? uri : `${uri}/`}${encodeURIComponent(name)}`;
+}
+
+/**
+ * The directory containing a resource, and the resource's name in it: `parentUri('file:///C:/a/b%20c')` is
+ * `{ uri: 'file:///C:/a', name: 'b c' }`. A `file:` URI goes by this OS's path rules (`src/paths.js`), so
+ * `file:///C:/` and `file://server/share/` are roots; any other scheme by its path's segments.
+ * @param {string} uri
+ * @returns {{ uri: string, name: string } | null} `null` for a root.
+ */
+function parentUri(uri) {
+  if (/^file:/i.test(uri)) {
+    let path;
+    try {
+      path = paths.fromUri(uri);
+    } catch {
+      // Not a path on this OS: by its segments, as below.
+    }
+    if (path !== undefined) {
+      const parent = paths.parent(path);
+      return parent === null ? null : { uri: paths.toUri(parent), name: paths.basename(path) };
+    }
+  }
+  const url = new URL(uri);
+  const trimmed = url.pathname.replace(/\/+$/, '');
+  if (!trimmed) {
+    return null;
+  }
+  const cut = trimmed.lastIndexOf('/');
+  const name = decodeURIComponent(trimmed.slice(cut + 1));
+  url.pathname = trimmed.slice(0, cut) || '/';
+  url.search = '';
+  url.hash = '';
+  return { uri: url.href, name };
 }
 
 /** A URI's scheme: a letter, then letters, digits, `+`, `-` or `.` (RFC 3986). */
@@ -234,4 +269,4 @@ class FileSystem {
   }
 }
 
-module.exports = { FileSystem, childUri, fsError };
+module.exports = { FileSystem, childUri, parentUri, fsError };
