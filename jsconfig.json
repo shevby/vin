@@ -4,8 +4,10 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "jsx": "react-jsx",
+    "checkJs": true,
+    "noEmit": true,
     "types": ["node"]
   },
-  "include": ["index.js", "src", "ui", "plugins"],
+  "include": ["index.js", "src", "ui", "plugins", "test"],
   "exclude": ["node_modules", "dist"]
 }

@@ -18,7 +18,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
 
 - Always write JSDoc for every class, function, method, and exported value — `@param`, `@returns`, `@typedef`, `@type` — so VS Code gives autocompletion and hover docs in plain JS.
 - When JSDoc isn't enough (overloads, complex generics, a plugin-facing API, or the shape of a module crossing the CommonJS/ESM boundary), add a `.d.ts` next to the file (`foo.js` → `foo.d.ts`). A sibling `.d.ts` replaces the inferred types for everyone importing that file, so keep it complete and in sync.
-- `jsconfig.json` configures VS Code's JS language service (module resolution, JSX); `@types/node` is pinned to the Node major version in use.
+- `jsconfig.json` configures VS Code's JS language service (module resolution, JSX) with `checkJs` on, so type errors show in the editor; `npm run typecheck` runs the same check with TypeScript 7, which is used only as a checker, never to compile. `@types/node` is pinned to the Node major version in use.
 
 ## Project Structure
 
@@ -94,7 +94,7 @@ Keybindings live in [CONTROLS.md](CONTROLS.md), kept separate since they're not 
 
 - Local only — no `git push`.
 - A separate branch per feature/fix.
-- Run tests before merging into `master`.
+- Run `npm run check` (typecheck + tests) before merging into `master`.
 - A bug fix should add a test covering the regression it fixes, when that's reasonable and doesn't take too long — not a hard requirement.
 - Never delete branches or squash commits.
 
@@ -108,7 +108,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 0.2 Project skeleton — CommonJS backend, ESM UI, `Vin` entry point, `node --test`.
 - [x] 0.3 JSX build with esbuild (`npm start`, `npm run dev`).
 - [x] 0.4 JSDoc, `jsconfig.json`, and `@types/*` for VS Code autocompletion.
-- [ ] 0.5 `npm run typecheck` — TypeScript as a dev-only checker of the JSDoc types (`tsc --noEmit`; code stays plain JS); run it with the tests before merging.
+- [x] 0.5 `npm run typecheck` — TypeScript as a dev-only checker of the JSDoc types (`tsc --noEmit`; code stays plain JS); run it with the tests before merging.
 - [ ] 0.6 Tests for `.jsx` components — `node --test` can't parse JSX, so transpile test files with esbuild or register a loader hook; render with [ink-testing-library](https://github.com/vadimdemedes/ink-testing-library) (it doesn't declare supported Ink versions — verify it works with Ink 7).
 - [ ] 0.7 `prepare` script that builds `dist/` (it's git-ignored), so a fresh `npm install` + `npm link` gives a working global `vin`.
 - [ ] 0.8 Debug log file — stdout/stderr belong to Ink while the TUI runs.
