@@ -26,7 +26,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
 2. **[Ink](https://github.com/vadimdemedes/ink)** for the TUI — React for interactive command-line apps. A directory with thousands of entries is windowed (only visible rows mounted), never rendered as one giant list — Ink itself renders at a throttled ~32 FPS and runs 50MB+ of RAM, so pagination matters more than the FPS cap.
 3. **Electron + React** — out of scope for now. Kept in mind as a possible future GUI, reusing the same component patterns as the Ink TUI.
 4. **[JSON5](https://json5.dev/)** for configuration — human-editable (comments, trailing commas, unquoted keys), unlike vifm's proprietary config language. Parsed with [momoa](https://github.com/humanwhocodes/momoa), which keeps line and column for every value, so errors point into the file.
-5. **Cross-platform** — Windows, Linux, and macOS. On Windows, accept both native paths (`C:\folder\file`) and Git Bash-style paths (`/c/folder/file`); no concrete use case yet, but keep the path parser aware of both formats.
+5. **Cross-platform** — Windows, Linux, and macOS. Paths are shown Unix-style on every OS (`~/…`, `/c/…`, `//server/share/…`), but input accepts native ones too (`C:\folder\file`, pasted from Explorer), and the native form is what goes to the OS and, later, the clipboard.
 
 ## Code Conventions
 
@@ -104,6 +104,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - The UI calls backend functions over JSON-RPC, or — for the TUI — directly or through a proxy.
   - Both go through a `Transport` (`src/transport.js`) with two operations — `call(path, args)` and `subscribe(handler, listener)`. `Vin` hands the TUI an in-process one; it still copies arguments and results as JSON and reduces errors to their message and `code`, so nothing works in-process that would break over JSON-RPC. The UI never imports `Vin` or handlers directly.
   - Every handler has a name, and every UI window connects to its handler by that name — a sub-handler's name is the dotted chain down to it (`handler.subhandler`), so `handler.subhandler.method()` calls `method` on that sub-handler directly.
+- Paths (`src/paths.js`) — kept in native absolute form; `paths.resolve(input, base)` reads any typed or pasted form (or throws an `EPATH` error with the reason), `paths.display(path)` shows it Unix-style. Its header lists the Windows edge cases.
 - File access: a `FileSystemProvider`-style interface (`stat`, `readDirectory`, `readFile`, `writeFile`, `rename`, `delete`, `watch`, …), implemented once per protocol and consumed uniformly everywhere else (modeled on VS Code's `FileSystemProvider`).
   - First iteration: local disk only.
   - Network protocols are in scope for later — SFTP via [`ssh2`](https://github.com/mscdex/ssh2)/[`ssh2-sftp-client`](https://www.npmjs.com/package/ssh2-sftp-client), FTP/FTPS via [`basic-ftp`](https://www.npmjs.com/package/basic-ftp). WebDAV excluded for now.
@@ -159,7 +160,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
 - [x] 1.8 TUI window manager — overlays (see Glossary) stacked over the main view, with focus and key input routed to the topmost one.
 - [x] 1.9 Configuration — `config.json5` in the project root, user values merged over defaults declared in code, validated with readable errors.
-- [ ] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays the native form.
+- [x] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays Unix-style (`~/…`, `/c/…`), keeping the native form for the OS.
 - [ ] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
 - [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
 - [ ] 1.14 Standard dialogs — confirm, text input, and choice list as reusable windows (1.8), with their keys, for delete (2.9), rename and create (2.7), conflict prompts (2.10), and passphrases (5.2). *(proposed)*
