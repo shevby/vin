@@ -14,6 +14,8 @@ const { paths } = require('../../../paths');
  * @property {boolean} executable
  * @property {number | null} size In bytes.
  * @property {number | null} mtime Last modified, in ms since the epoch.
+ * @property {number} [free] For a root — a drive in the list of drives (2.4) — the bytes free on it, once
+ *   known.
  */
 
 /**
@@ -28,6 +30,9 @@ const { paths } = require('../../../paths');
 
 /** Entries whose details are fetched at once — and sent to the UI as one update. */
 const STAT_BATCH = 256;
+
+/** How long, in ms, a batch of details waits before showing what has come, while an entry is slow. */
+const SLOW_STAT = 200;
 
 /** Directories a pane's history keeps, as a browser's does. */
 const HISTORY_SIZE = 100;
@@ -260,8 +265,8 @@ class Pane extends Handler {
   }
 
   /**
-   * Goes up to the parent directory, with the cursor on the one it came from. A root has none — the list of
-   * drives above `C:\` is 2.4.
+   * Goes up to the parent directory, with the cursor on the one it came from — from a drive's root on
+   * Windows, to the list of drives (2.4). A root has none.
    */
   async toParent() {
     const up = parentUri(this.state.uri);
@@ -297,19 +302,8 @@ class Pane extends Handler {
       throw new TypeError(`Expected a path or URI, got ${JSON.stringify(target)}`);
     }
     // A scheme of two letters at least: `C:` starts a Windows path.
-    const uri = /^[a-z][a-z\d+.-]+:/i.test(target) ? canonical(target) : paths.toUri(paths.resolve(target, this.#here()));
+    const uri = /^[a-z][a-z\d+.-]+:/i.test(target) ? canonical(target) : paths.resolveUri(target, this.state.uri);
     await this.#go(uri, null);
-  }
-
-  /**
-   * @returns {string | undefined} The directory shown, as a path, if it's on the local disk.
-   */
-  #here() {
-    try {
-      return paths.fromUri(this.state.uri);
-    } catch {
-      return undefined;
-    }
   }
 
   /**
@@ -424,24 +418,40 @@ class Pane extends Handler {
   }
 
   /**
-   * Fetches the entries' details in batches, each batch one update. An entry that can't be read (gone
-   * since, or no permission) keeps none.
+   * Fetches the entries' details in batches, each batch one update — or, while one is slow to answer (a
+   * disconnected network drive takes seconds), one update of what has come every `SLOW_STAT` ms, so it
+   * doesn't hold up the rest. An entry that can't be read (gone since, or no permission) keeps none.
    * @param {string} uri The directory listed.
    * @param {Entry[]} entries As listed, in the order shown.
    * @param {() => boolean} current Whether this listing is still the latest.
    */
   async #fetchDetails(uri, entries, current) {
     for (let start = 0; start < entries.length; start += STAT_BATCH) {
-      const batch = entries.slice(start, start + STAT_BATCH);
-      const stats = await Promise.all(batch.map((entry) => this.fs.stat(childUri(uri, entry.name)).catch(() => null)));
-      if (!current()) {
-        return;
-      }
-      stats.forEach((stat, i) => {
-        if (stat) {
-          Object.assign(this.state.entries[start + i], { size: stat.size, mtime: stat.mtime, executable: stat.executable });
+      /** @type {Map<number, import('../../../fs/file-system').FileStat>} */
+      const arrived = new Map();
+      let done = false;
+      const batch = Promise.all(entries.slice(start, start + STAT_BATCH).map((entry, i) => this.fs.stat(childUri(uri, entry.name))
+        .then((stat) => {
+          arrived.set(start + i, stat);
+        }, () => {})))
+        .then(() => {
+          done = true;
+        });
+      while (!done) {
+        /** @type {ReturnType<typeof setTimeout> | undefined} */
+        let timer;
+        await Promise.race([batch, new Promise((resolve) => {
+          timer = setTimeout(resolve, SLOW_STAT);
+        })]);
+        clearTimeout(timer);
+        if (!current()) {
+          return;
         }
-      });
+        for (const [index, { size, mtime, executable, free }] of arrived) {
+          Object.assign(this.state.entries[index], { size, mtime, executable }, free === undefined ? {} : { free });
+        }
+        arrived.clear();
+      }
     }
   }
 }

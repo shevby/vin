@@ -15,7 +15,7 @@ const { tick } = require('../../../test/dialogs');
  * @param {{ left?: string, right?: string }} [dirs] The panes' directories, as URIs. Default: ones that
  *   don't exist.
  */
-async function open(config, { left = 'file:///a', right = 'file:///b' } = {}) {
+async function open(config, { left = 'file:///vin-missing-a', right = 'file:///vin-missing-b' } = {}) {
   const vin = new Vin();
   const main = new Main({ left, right });
   vin.register(main);
@@ -45,8 +45,8 @@ async function open(config, { left = 'file:///a', right = 'file:///b' } = {}) {
 test('the main window opens with two panes, the left one active and focused', async () => {
   const { main, focus } = await open();
   assert.deepEqual(main.state, { active: 'left', singlePane: false });
-  assert.equal(main.left.state.uri, 'file:///a');
-  assert.equal(main.right.state.uri, 'file:///b');
+  assert.equal(main.left.state.uri, 'file:///vin-missing-a');
+  assert.equal(main.right.state.uri, 'file:///vin-missing-b');
   assert.equal(focus(), 'main.left');
 });
 

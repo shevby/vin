@@ -182,12 +182,62 @@ test('a directory that can\'t be entered is reported, and the pane stays; histor
   assert.equal(vin.messages.list.length, 2);
 });
 
-test('home goes to the home directory, and a root has no parent', async (t) => {
-  const { pane } = await open(path.parse(os.tmpdir()).root);
+test('home goes to the home directory, and a root has no parent', { skip: process.platform === 'win32' }, async () => {
+  const { pane } = await open('/');
   await pane.loaded;
-  const root = pane.state.uri;
   await pane.toParent();
-  assert.equal(pane.state.uri, root);
+  assert.equal(pane.state.uri, 'file:///');
   await pane.home();
   assert.equal(pane.state.uri, paths.toUri(paths.home));
+});
+
+test('on Windows, above a drive is the list of drives, with their free space', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = path.parse(os.tmpdir()).root;
+  const drive = root[0].toLowerCase();
+  const { vin, pane } = await open(root);
+  // Only this drive: another could be a disconnected network drive, which takes seconds to answer.
+  const local = vin.fs.provider('file:///');
+  const readDirectory = local.readDirectory.bind(local);
+  t.mock.method(local, 'readDirectory', async (/** @type {string} */ uri) => uri === 'file:///'
+    ? [{ name: drive, type: 'directory', symlink: false }]
+    : readDirectory(uri));
+  await pane.loaded;
+  await pane.toParent();
+  assert.equal(pane.state.uri, 'file:///');
+  assert.equal(current(pane), drive, 'on the drive it came from');
+  await pane.loaded;
+  assert.ok((pane.state.entries[0].free ?? 0) > 0);
+  await pane.toParent();
+  assert.equal(pane.state.uri, 'file:///', 'the top');
+  await pane.open();
+  assert.equal(pane.state.uri, paths.toUri(root));
+  await pane.navigate('/');
+  assert.equal(pane.state.uri, 'file:///', '/ is the list of drives');
+  await pane.navigate(`${drive}/`);
+  assert.equal(pane.state.uri, paths.toUri(root), 'a drive, relative to it');
+  await pane.home();
+  assert.equal(pane.state.uri, paths.toUri(paths.home));
+});
+
+test('an entry slow to stat doesn\'t hold up the others\' details', async (t) => {
+  const dir = tempDir(t, { fast: 'x', slow: 'xx' });
+  const { vin, pane } = await open(dir);
+  const local = vin.fs.provider('file:///');
+  const stat = local.stat.bind(local);
+  /** @type {() => void} */
+  let release = () => {};
+  const held = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  t.mock.method(local, 'stat', async (/** @type {string} */ uri) => {
+    if (uri.endsWith('/slow')) {
+      await held;
+    }
+    return stat(uri);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.deepEqual(pane.state.entries.map((entry) => entry.size), [1, null]);
+  release();
+  await pane.loaded;
+  assert.deepEqual(pane.state.entries.map((entry) => entry.size), [1, 2]);
 });

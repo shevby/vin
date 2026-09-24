@@ -18,6 +18,9 @@ const { fileURLToPath, pathToFileURL } = require('node:url');
  * - `C:x` is relative to the base directory if that's on `C:`, else to `C:\` — vin doesn't track a current
  *   directory per drive, as `cmd` does.
  * - Names can't hold `< > : " | ? *` or control characters.
+ * - Above the drives is the list of drives (2.4), which no path names: only its URI, `file:///` (`drives`),
+ *   shown as `/`, with each drive as its letter (`c`). So `/` alone reads as it (`resolveUri()`), and a URI
+ *   `file:///c/…` as `C:\…` — as a Git Bash path would.
  *
  * `~` and `~/…` are the home directory; `~name` is an ordinary name — other users' homes aren't looked up.
  * `..` is resolved as text (the logical path, as a shell's `cd` does), never through symlinks.
@@ -40,6 +43,9 @@ class PathError extends Error {
   }
 }
 
+/** On Windows, the list of drives' URI (`Paths#drives`). */
+const DRIVES = 'file:///';
+
 /** Characters Windows doesn't allow in names (besides control characters). */
 const WINDOWS_INVALID = /[<>:"|?*\x00-\x1f]/;
 
@@ -61,6 +67,48 @@ class Paths {
     this.#path = this.#windows ? nodePath.win32 : nodePath.posix;
     /** The home directory, in native form. */
     this.home = this.resolve(home);
+    /**
+     * On Windows, the URI of the list of drives, the parent of every drive's root (2.4); `null` elsewhere,
+     * where `file:///` is the root directory.
+     * @type {string | null}
+     */
+    this.drives = this.#windows ? DRIVES : null;
+  }
+
+  /**
+   * Like `resolve()`, as a URI — which can also be the list of drives on Windows: `/` alone, or, relative
+   * to it, a drive and a path in it (`c/Users`).
+   * @param {string} input
+   * @param {string} [base] The directory a relative path is relative to, as a URI — of any scheme, but only
+   *   a local one (a `file:` URI on this OS) resolves one.
+   * @returns {string}
+   * @throws {PathError} As `resolve()` does — for a relative path without a local `base` too.
+   */
+  resolveUri(input, base) {
+    if (this.#windows && typeof input === 'string') {
+      if (/^\/+$/.test(input)) {
+        return DRIVES;
+      }
+      if (base === DRIVES) {
+        return this.toUri(this.resolve(/^[a-z]:|^[\\/~"]/i.test(input) ? input : `/${input}`));
+      }
+    }
+    let directory;
+    try {
+      directory = base === undefined ? undefined : this.fromUri(base);
+    } catch {
+      // Not local: only an absolute path resolves.
+    }
+    return this.toUri(this.resolve(input, directory));
+  }
+
+  /**
+   * @param {string} path As `resolve()` returns it.
+   * @returns {string | null} On Windows, if `path` is a drive's root (`C:\`), the drive's name in the list of
+   *   drives (`c`); else `null`.
+   */
+  driveName(path) {
+    return this.#windows && /^[A-Z]:\\$/.test(path) ? path[0].toLowerCase() : null;
   }
 
   /**
@@ -204,6 +252,9 @@ class Paths {
     if (!/^file:/i.test(uri)) {
       return uri;
     }
+    if (this.#windows && uri === DRIVES) {
+      return '/';
+    }
     try {
       return this.display(this.fromUri(uri));
     } catch {
@@ -227,7 +278,8 @@ class Paths {
   }
 
   /**
-   * The path of a `file:` URI, as `resolve()` would return it.
+   * The path of a `file:` URI, as `resolve()` would return it. On Windows, `file:///c/…` is drive `C:` —
+   * an entry of the list of drives, whose URI (`drives`) has no path.
    * @param {string} uri
    * @returns {string}
    * @throws {PathError} If `uri` isn't a `file:` URI of an absolute path on this OS.
@@ -238,7 +290,8 @@ class Paths {
     }
     let path;
     try {
-      path = fileURLToPath(uri, { windows: this.#windows });
+      const url = this.#windows ? uri.replace(/^file:\/\/\/([a-z])(?=\/|$)/i, 'file:///$1:') : uri;
+      path = fileURLToPath(url, { windows: this.#windows });
     } catch (error) {
       throw new PathError(uri, /** @type {Error} */ (error).message);
     }

@@ -108,7 +108,7 @@ test('childUri names an entry of a directory, whatever the scheme', () => {
   }
 });
 
-test('parentUri gives the containing directory and the name in it, and null for a root', () => {
+test("parentUri gives the containing directory and the name in it — a drive's is the list of drives — and null for a root", () => {
   assert.deepEqual(parentUri('sftp://host/home/me/a%20b'), { uri: 'sftp://host/home/me', name: 'a b' });
   assert.deepEqual(parentUri('sftp://host/home/'), { uri: 'sftp://host/', name: 'home' });
   assert.equal(parentUri('sftp://host/'), null);
@@ -116,9 +116,12 @@ test('parentUri gives the containing directory and the name in it, and null for 
   assert.deepEqual(parentUri(childUri(paths.toUri(dir), "it's;1")), { uri: paths.toUri(dir), name: "it's;1" });
   assert.deepEqual(parentUri(paths.toUri(dir)), { uri: paths.toUri(os.tmpdir()), name: 'a b' });
   const root = path.parse(os.tmpdir()).root;
-  assert.equal(parentUri(paths.toUri(root)), null, root);
   if (process.platform === 'win32') {
+    assert.deepEqual(parentUri(paths.toUri(root)), { uri: 'file:///', name: root[0].toLowerCase() }, 'a drive: in the list');
+    assert.equal(parentUri('file:///'), null, 'the list of drives');
     assert.equal(parentUri('file://server/share/'), null, 'a share is a root');
     assert.deepEqual(parentUri('file://server/share/x'), { uri: 'file://server/share/', name: 'x' });
+  } else {
+    assert.equal(parentUri(paths.toUri(root)), null, root);
   }
 });

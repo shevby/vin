@@ -6,7 +6,7 @@ const path = require('node:path');
 const { text } = require('node:stream/consumers');
 const { pipeline } = require('node:stream/promises');
 const { Readable } = require('node:stream');
-const { LocalProvider } = require('./local');
+const { LocalProvider, listDrives } = require('./local');
 const { paths } = require('../paths');
 
 const local = new LocalProvider();
@@ -102,6 +102,27 @@ test('stat tells executables: by execute bit on Unix, by extension on Windows', 
     fs.chmodSync(path.join(dir, 'run.sh'), 0o755);
     assert.deepEqual(await executables(new LocalProvider({ platform: 'linux' })), ['run.sh']);
   }
+});
+
+test('stat of a root tells the space free on it', async () => {
+  const root = await local.stat(paths.toUri(path.parse(os.tmpdir()).root));
+  assert.equal(root.type, 'directory');
+  assert.ok(typeof root.free === 'number' && root.free > 0, String(root.free));
+  assert.equal((await local.stat(paths.toUri(os.tmpdir()))).free, undefined);
+});
+
+test('on Windows, file:/// lists the drives by letter, found by fsutil or else by probing', { skip: process.platform !== 'win32' }, async () => {
+  const drive = path.parse(os.tmpdir()).root[0].toUpperCase();
+  const drives = await listDrives();
+  assert.ok(drives.includes(drive), drives.join());
+  // Not every letter: a disconnected network drive would keep the test waiting for seconds.
+  const unused = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find((letter) => !drives.includes(letter)) ?? 'A';
+  const letters = [drive, unused].sort();
+  assert.deepEqual(await listDrives({ command: ['vin-no-such-command'], letters }), [drive], 'probed');
+  const entries = await local.readDirectory('file:///');
+  assert.deepEqual(entries.find((entry) => entry.name === drive.toLowerCase()), { name: drive.toLowerCase(), type: 'directory', symlink: false });
+  assert.equal((await local.stat('file:///')).type, 'directory');
+  assert.equal((await local.stat(`file:///${drive.toLowerCase()}`)).type, 'directory', 'an entry of the list');
 });
 
 test('createDirectory, writeFile and readFile refuse to replace unless asked', async (t) => {
