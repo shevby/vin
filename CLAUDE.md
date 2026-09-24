@@ -6,12 +6,19 @@ A vifm-inspired terminal file manager with support for network protocols and use
 
 1. **Node.js 24 LTS** — plain JavaScript, no TypeScript.
    - Backend (`src/`, native plugins, root `index.js`): CommonJS — `require()`, not `import`.
-   - Frontend (`ui/`): ESM — `import`. Ink 7 and its `yoga-layout` dependency use top-level `await`, so they can't be `require()`d; `ui/package.json` sets `"type": "module"`. The backend crosses into the UI with a single dynamic `import()`, and the UI can `import` backend CommonJS modules directly.
+   - Frontend (`ui/`): ESM — `import`. Ink 7 and its `yoga-layout` dependency use top-level `await`, so they can't be `require()`d; `ui/package.json` sets `"type": "module"`. The backend crosses into the UI with a single dynamic `import()`, and the UI can `import` backend CommonJS modules directly. In ESM files, relative imports include the file extension (`'../../src/vin.js'`).
+   - Components use real JSX in `.jsx` files. [esbuild](https://esbuild.github.io/) bundles `ui/tui/index.jsx` into `dist/tui.mjs` (git-ignored), leaving `node_modules` packages external; `Vin` loads that bundle. `npm start` builds first; `npm run dev` rebuilds on change.
    - Tests use the built-in runner (`node --test`); test files sit next to the code they test as `*.test.js`.
 2. **[Ink](https://github.com/vadimdemedes/ink)** for the TUI — React for interactive command-line apps. A directory with thousands of entries is windowed (only visible rows mounted), never rendered as one giant list — Ink itself renders at a throttled ~32 FPS and runs 50MB+ of RAM, so pagination matters more than the FPS cap.
 3. **Electron + React** — out of scope for now. Kept in mind as a possible future GUI, reusing the same component patterns as the Ink TUI.
 4. **[JSON5](https://json5.dev/)** for configuration — human-editable (comments, trailing commas, unquoted keys), unlike vifm's proprietary config language.
 5. **Cross-platform** — Windows, Linux, and macOS. On Windows, accept both native paths (`C:\folder\file`) and Git Bash-style paths (`/c/folder/file`); no concrete use case yet, but keep the path parser aware of both formats.
+
+## Code Conventions
+
+- Always write JSDoc for every class, function, method, and exported value — `@param`, `@returns`, `@typedef`, `@type` — so VS Code gives autocompletion and hover docs in plain JS.
+- When JSDoc isn't enough (overloads, complex generics, a plugin-facing API, or the shape of a module crossing the CommonJS/ESM boundary), add a `.d.ts` next to the file (`foo.js` → `foo.d.ts`). A sibling `.d.ts` replaces the inferred types for everyone importing that file, so keep it complete and in sync.
+- `jsconfig.json` configures VS Code's JS language service (module resolution, JSX); `@types/node` is pinned to the Node major version in use.
 
 ## Project Structure
 

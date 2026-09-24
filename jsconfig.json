@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["index.js", "src", "ui", "plugins"],
+  "exclude": ["node_modules", "dist"]
+}
