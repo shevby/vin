@@ -21,8 +21,8 @@ const NAMED = /** @type {const} */ ([
  * Turns what Ink's `useInput` reports into one canonical chord (`src/keys.js`): `j`, `shift+g`, `ctrl+w`,
  * `alt+x`, `shift+tab`, `space`, `enter`.
  *
- * Terminals don't report everything: Ink passes function keys through with no name, so `f1`–`f12` can be
- * bound but not yet pressed in the TUI, and `ctrl+shift+<letter>` arrives as `ctrl+<letter>`.
+ * Terminals don't report everything: `ctrl+shift+<letter>` arrives as `ctrl+<letter>`. Function keys come
+ * through with no name, so they give `null` — vin leaves them to the OS anyway.
  * @param {string} input
  * @param {Key} key
  * @returns {string | null} `null` for input that isn't one key (a paste, an unknown sequence).

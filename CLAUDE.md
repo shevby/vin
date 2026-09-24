@@ -154,7 +154,6 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [ ] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays the native form.
 - [ ] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
 - [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
-- [ ] 1.13 Function keys in the TUI — Ink's `useInput` recognizes `f1`–`f12` but passes them on with no name, so they can be bound (1.7) but never pressed; read them from Ink's raw input (or the kitty keyboard protocol) instead. *(proposed)*
 
 ### 2. Local file manager (MVP)
 
@@ -176,7 +175,6 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [ ] 2.16 Help window — generated from the contribution registry, so plugin keys and commands appear automatically.
 - [ ] 2.17 Session state — restore each pane's directory and view options on start; a `--choose-dir`-style option (vifm has one) so a shell function can `cd` to vin's last directory on exit.
 - [ ] 2.18 Startup paths — `vin [left-path] [right-path]` opens the panes there, as vifm does.
-- [ ] 2.19 Counts — a number before a key sequence (`5j`, `3dd`) repeats the command or is passed to it, as in vifm; needs the key sequencer (1.7) to collect digits and bindings to say whether they take a count. *(proposed)*
 
 ### 3. Context menu and CLI
 

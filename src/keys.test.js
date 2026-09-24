@@ -17,7 +17,6 @@ test('parses VS Code-style sequences into canonical chords', () => {
     ['space', ['space']],
     ['Enter', ['enter']],
     ['escape', ['escape']],
-    ['F2', ['f2']],
     ['pageup', ['pageup']],
     [':', [':']],
     ['?', ['?']],
@@ -41,6 +40,8 @@ test('explains malformed keys', () => {
     ['ctrl+ctrl+x', /repeats ctrl/],
     ['shift+;', /shift combines only with letters and named keys; write the character it types/],
     ['meta+x', /"meta\+x" isn't a key/],
+    ['F2', /function keys are left to the OS/],
+    ['ctrl+f12', /function keys are left to the OS/],
   ];
   for (const [text, message] of cases) {
     assert.throws(() => parseKeys(text), message, text);

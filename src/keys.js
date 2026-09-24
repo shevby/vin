@@ -3,7 +3,8 @@
  * sequence is chords separated by spaces (`g g`, `ctrl+w h`).
  *
  * - Modifiers: `ctrl`, `alt`, `shift`, in any order and case; the canonical order is `ctrl+alt+shift+`.
- * - Named keys (any case): the ones in `NAMED_KEYS` — `space`, `enter`, `escape`, arrows, `f1`–`f12`, ….
+ * - Named keys (any case): the ones in `NAMED_KEYS` — `space`, `enter`, `escape`, arrows, ….
+ * - Function keys (`f1`–`f12`) are left to the OS and can't be bound.
  * - Any other key is the single character it types: `j`, `:`, `?`, `+`. An uppercase letter means
  *   `shift+` the lowercase one, so `G` and `shift+g` are the same chord (canonically `shift+g`). `shift`
  *   can't combine with other characters: a terminal sends `:`, not `shift+;`, so write `:`.
@@ -13,7 +14,6 @@
 const NAMED_KEYS = new Set([
   'space', 'tab', 'enter', 'escape', 'backspace', 'delete', 'insert',
   'up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown',
-  ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
 ]);
 
 const MODIFIERS = /** @type {const} */ (['ctrl', 'alt', 'shift']);
@@ -49,6 +49,9 @@ function parseChord(chord, text) {
   }
 
   let key = rest;
+  if (/^f\d+$/i.test(rest)) {
+    throw new TypeError(`Key "${text}": function keys are left to the OS and can't be bound`);
+  }
   if (NAMED_KEYS.has(rest.toLowerCase())) {
     key = rest.toLowerCase();
   } else if ([...rest].length !== 1) {
