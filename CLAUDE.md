@@ -52,6 +52,8 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - `Handler` — each subclass is the handler for one window.
   - `Vin` — a standalone class (not a `Handler` subclass) that manages every handler and the event system between them, and starts the UI, connecting it to them.
   - A `Handler` can contain sub-handlers, nested to any depth. The UI addresses one by chaining names — `handler.subhandler.method()`, `handler.subhandler.subsubhandler.method()`, and so on (the same dot-notation already used for the CLI convention in Controls, e.g. `vin zip.zip <files>`).
+    - Callable by path: every method a `Handler` subclass defines, except `_underscored` and `#private` ones — prefix helpers accordingly. `Handler`'s own methods (lifecycle, tree management) never are, and neither are fields or getters.
+    - Lifecycle: `init()` runs `onInit()`, then initializes sub-handlers in the order they were added; `dispose()` disposes them in reverse, then runs `onDispose()`. Subclasses override the `on…` hooks, never `init`/`dispose` themselves.
   - Every `Handler` exposes two APIs for updating its window's state:
     - `this.update(state)` — fully replaces the window's state (model) and re-registers every property (triggers a full re-render).
     - `this.state.<propName>.<subPropName> = …` — edits a single property (triggers a re-render of just its subscribers, via `useSelector` on the React side).
@@ -63,6 +65,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - Plugins can only modify existing GUI or logic through predefined **extension points** — fixed areas that expose their own contribution interface — rather than editing arbitrary GUI/logic directly. The context menu (see Controls) is one such area: plugins add entries through its interface instead of rewriting the menu itself.
   - Main entry points:
     - `src/vin.js` — the `Vin` class: standalone, manages handlers and the event system, and starts the UI, connecting it to them.
+    - `src/handler.js` — the `Handler` base class.
     - `src/handlers/<handler-name>/` — sources for each Handler; sub-handlers nest the same way, e.g. `src/handlers/<handler-name>/<subhandler-name>/`.
     - `index.js` (repo root) — application entry point; creates `Vin` and starts the app.
 - UI:
@@ -124,7 +127,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 
 ### 1. Core architecture
 
-- [ ] 1.1 `Handler` base class — name, sub-handlers nested to any depth, dotted-path addressing (`handler.subhandler.method()`), lifecycle (init/dispose).
+- [x] 1.1 `Handler` base class — name, sub-handlers nested to any depth, dotted-path addressing (`handler.subhandler.method()`), lifecycle (init/dispose).
 - [ ] 1.2 State API — `this.state` as a deep proxy that records edits as path-based patches; `this.update(state)` for full replacement; patches from one tick batched into one message.
 - [ ] 1.3 UI store and `useSelector` — a per-window mirror of handler state that applies patches; built on React's `useSyncExternalStore`, so only components reading a changed path re-render.
 - [ ] 1.4 In-process transport and `ui/tui/handler.js` (`init(handlerName)`) — the TUI's direct proxy, using the same message shapes the JSON-RPC transport will (4.5).
@@ -177,6 +180,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [ ] 4.8 Plugin docs and typings — a `.d.ts` for the native plugin API (per Code Conventions) and a written spec of the JSON-RPC protocol.
 - [ ] 4.9 Reference plugins — `zip` as a native plugin (context-menu entries plus `vin zip.zip` / `vin zip.unzip`), and a small foreign plugin in another language (e.g. Python) to prove the protocol is language-agnostic.
 - [ ] 4.10 Trust model — a separate process isolates crashes, not permissions: a foreign plugin can still do anything the user can. Decide how plugins get trusted (explicit install/enable), and whether Node-based ones run under Node's permission model (`--permission`, `--allow-fs-read`, …).
+- [ ] 4.11 Name collisions — top-level handler names share one namespace (`Vin.register` rejects a duplicate), so a plugin named like a built-in or another plugin must fail with a readable message that names both sources, not crash startup; possibly an alias in config to rename one. *(proposed)*
 
 ### 5. Network protocols
 
