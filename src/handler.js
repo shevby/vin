@@ -3,6 +3,7 @@ const { isName } = require('./names');
 const { Model } = require('./state');
 
 /**
+ * @typedef {import('./state').Data} Data
  * @typedef {import('./state').StateObject} StateObject
  * @typedef {import('./state').StateListener} StateListener
  * @typedef {import('./events').EventListener} EventListener
@@ -27,6 +28,9 @@ const { Model } = require('./state');
  * Events: `this.emit('changed', payload)` publishes `<this path>.changed` to every handler listening with
  * `this.on('main.left.changed', listener)`; listening stops when the listener's handler is disposed.
  * Both need the handler's tree to be registered with `Vin`.
+ *
+ * Windows: `await this.openWindow(new Confirm('confirm', …))` opens an overlay and resolves with what it
+ * closes with (`this.close(true)` inside it); `this.focus()` makes a handler the focus within its window.
  *
  * Contributions: a class declares its commands, keybindings, and context-menu entries in
  * `static contributes`, registered while an instance is initialized. Commands are named after the handler's
@@ -151,7 +155,7 @@ class Handler {
     if (!isName(event)) {
       throw new TypeError(`Invalid event name "${event}": use a letter, then letters, digits, "-" or "_"`);
     }
-    this.#events('emit').emit(`${this.path}.${event}`, payload, this.path);
+    this.#host('emit events').events.emit(`${this.path}.${event}`, payload, this.path);
   }
 
   /**
@@ -165,7 +169,7 @@ class Handler {
     if (this.#disposing) {
       throw new Error(`Disposed handler "${this.path}" can't listen for "${name}"`);
     }
-    const off = this.#events('listen for').on(name, listener);
+    const off = this.#host('listen for events').events.on(name, listener);
     this.#subscriptions.add(off);
     return () => {
       off();
@@ -174,14 +178,49 @@ class Handler {
   }
 
   /**
-   * @param {string} action For the error message.
+   * Opens a window over the others: adds `window` as a sub-handler of this one, initializes it, and puts it
+   * on top with the focus. Keys go to it, and to its sub-handlers, until it's closed.
+   * @param {Handler} window A new handler; the UI draws it with the component for its kind.
+   * @returns {Promise<Data>} What the window is closed with — `close(result)` — or `null` if it's dismissed
+   *   (Escape) or disposed.
+   * @throws {Error} If this handler's tree isn't registered with `Vin`, `window` can't be added here, or it
+   *   fails to initialize — it's removed again then.
    */
-  #events(action) {
+  async openWindow(window) {
+    return this.#host('open windows').windows.openTransient(this, window);
+  }
+
+  /**
+   * Closes the window this handler is in — itself, or its nearest ancestor opened with `openWindow()` — and
+   * disposes it; the opener's `openWindow()` then resolves with `result`. Closing a window that's already
+   * closing does nothing.
+   * @param {Data} [result]
+   * @returns {Promise<void>} Settles once the window is disposed; a failure there is logged, not thrown.
+   * @throws {Error} If this handler isn't in a window opened with `openWindow()`, or `result` isn't JSON data.
+   */
+  async close(result = null) {
+    return this.#host('close windows').windows.close(this, result);
+  }
+
+  /**
+   * Takes the focus within this handler's window, so keys go to it first, then to its ancestors up to the
+   * window's handler. If the window is covered, the focus takes effect once the window is on top again.
+   * @throws {Error} If this handler isn't in an open window.
+   */
+  focus() {
+    this.#host('take the focus').windows.focus(this);
+  }
+
+  /**
+   * @param {string} action For the error message.
+   * @returns {import('./host').Host}
+   */
+  #host(action) {
     const host = getHost(this);
     if (!host) {
-      throw new Error(`Handler "${this.path}" can't ${action} events: its top-level handler isn't registered with Vin`);
+      throw new Error(`Handler "${this.path}" can't ${action}: its top-level handler isn't registered with Vin`);
     }
-    return host.events;
+    return host;
   }
 
   /**

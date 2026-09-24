@@ -19,4 +19,5 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - `Tab` to switch between split views.
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
+- `Escape` closes the window on top (a dialog, a menu), never the main window.
 - Everything else: TBD, added as it's built and tried out.

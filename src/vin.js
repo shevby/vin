@@ -7,9 +7,11 @@ const Core = require('./handlers/core/core');
 const { setHost } = require('./host');
 const { createInProcessTransport } = require('./transport');
 const { log } = require('./log');
+const { WindowStack } = require('./windows');
 
 /**
- * Manages every handler, the event system, and the contribution registry between them, and starts the UI.
+ * Manages every handler, the event system, the contribution registry, and the window stack between them,
+ * and starts the UI.
  * The built-in `core` handler is always registered first.
  */
 class Vin {
@@ -32,8 +34,23 @@ class Vin {
      * @readonly
      */
     this.registry = new Registry();
-    this.#host = { events: this.events, attach: (handler) => this.registry.attach(handler) };
-    this.register(new Core(this.registry));
+    /**
+     * The open windows and the focus; see `openWindow()` and `Handler#openWindow`.
+     * @readonly
+     */
+    this.windows = new WindowStack();
+    this.#host = {
+      events: this.events,
+      windows: this.windows,
+      attach: (handler) => {
+        const detach = this.registry.attach(handler);
+        return () => {
+          this.windows.forget(handler);
+          detach();
+        };
+      },
+    };
+    this.register(new Core(this.registry, this.windows));
   }
 
   /**
@@ -95,6 +112,19 @@ class Vin {
    */
   execute(command, options) {
     return this.registry.execute(command, options);
+  }
+
+  /**
+   * Opens a registered handler as a lasting window — the main window — initializing it first if needed.
+   * It stays open until the handler is disposed; overlays open over it with `Handler#openWindow`.
+   * @param {string} path
+   * @returns {Promise<void>}
+   * @throws {Error} If there's no such handler, it fails to initialize, or it's already open.
+   */
+  async openWindow(path) {
+    const handler = this.resolve(path);
+    await handler.init();
+    this.windows.open(handler);
   }
 
   /**
