@@ -1,6 +1,6 @@
 const { log } = require('./log');
 const { isPath } = require('./names');
-const { cloneData } = require('./state');
+const { cloneData, deepFreeze } = require('./state');
 
 /** @typedef {import('./state').Data} Data */
 
@@ -92,21 +92,6 @@ class EventBus {
       }
     });
   }
-}
-
-/**
- * @template {Data} T
- * @param {T} value
- * @returns {T}
- */
-function deepFreeze(value) {
-  if (typeof value === 'object' && value !== null) {
-    for (const child of Object.values(value)) {
-      deepFreeze(child);
-    }
-    Object.freeze(value);
-  }
-  return value;
 }
 
 module.exports = { EventBus };

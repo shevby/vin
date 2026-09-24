@@ -105,6 +105,22 @@ function cloneData(value, path = [], { what = 'State', ancestors = new Set() } =
 }
 
 /**
+ * Freezes JSON data all the way down, in place.
+ * @template {Data} T
+ * @param {T} value
+ * @returns {T} `value`.
+ */
+function deepFreeze(value) {
+  if (isObject(value)) {
+    for (const child of Object.values(value)) {
+      deepFreeze(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/**
  * @param {string} key
  * @param {readonly string[]} path
  * @param {string} [what]
@@ -405,4 +421,4 @@ class Model {
   }
 }
 
-module.exports = { Model, cloneData };
+module.exports = { Model, cloneData, deepFreeze };
