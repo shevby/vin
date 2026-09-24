@@ -45,11 +45,17 @@ test('drops levels below the lowest; an optional file waits for its first line a
   log.error('kept');
   assert.match(fs.readFileSync(file, 'utf8'), /^\S+ ERROR kept\n$/);
 
-  const unwritable = createLogger(path.join(path.dirname(file), 'missing', 'vin.log'), { optional: true });
+  const unwritable = createLogger(path.join(file, 'under-a-file', 'vin.log'), { optional: true });
   assert.doesNotThrow(() => unwritable.error('lost'));
 });
 
-test('VIN_LOG: a path logs everything, empty logs nothing, unset logs errors to vin.log', (t) => {
+test('an optional file creates its missing directories', (t) => {
+  const file = path.join(path.dirname(tempFile(t)), '.vin', 'nested', 'vin.log');
+  createLogger(file, { optional: true }).error('kept');
+  assert.match(fs.readFileSync(file, 'utf8'), /ERROR kept/);
+});
+
+test('VIN_LOG: a path logs everything, empty logs nothing, unset logs errors to .vin/vin.log', (t) => {
   const file = tempFile(t);
   const all = loggerFor(file);
   all.debug('debug line');
@@ -64,5 +70,5 @@ test('VIN_LOG: a path logs everything, empty logs nothing, unset logs errors to 
   assert.equal(errors.file, fallback);
   assert.doesNotMatch(fs.readFileSync(fallback, 'utf8'), /dropped/);
 
-  assert.equal(DEFAULT_LOG_FILE, path.join(__dirname, '..', 'vin.log'));
+  assert.equal(DEFAULT_LOG_FILE, path.join(__dirname, '..', '.vin', 'vin.log'));
 });
