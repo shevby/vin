@@ -1,6 +1,8 @@
 const Handler = require('../../../handler');
 const { childUri, parentUri } = require('../../../fs/file-system');
 const { paths } = require('../../../paths');
+const { failure } = require('../../../errors');
+const { opener } = require('../../../open');
 
 /** @typedef {import('../../../fs/file-system').FileType} FileType */
 
@@ -78,7 +80,8 @@ function canonical(uri) {
  * can later show any provider's files (`src/fs/`). It lists the directory (`entries`) with a cursor on one
  * of them (`cursor`, an index), and moves between directories (2.3): into the one under the cursor, up to
  * the parent — with the cursor on the directory it came from — home, or back and forward through its
- * history, as a browser does. A directory it comes back to gets its cursor where it was left.
+ * history, as a browser does. A directory it comes back to gets its cursor where it was left. A file it
+ * opens with the OS's default app (2.5).
  *
  * Moving to another directory keeps the current listing until the new one is read, so one that can't be
  * (no permission, gone) is reported and the pane stays where it was.
@@ -98,7 +101,8 @@ class Pane extends Handler {
       { method: 'pageDown', title: 'Cursor down a page' },
       { method: 'halfPageUp', title: 'Cursor up half a page' },
       { method: 'halfPageDown', title: 'Cursor down half a page' },
-      { method: 'open', title: 'Open', description: 'Enters the directory under the cursor' },
+      { method: 'open', title: 'Open', description: "Enters the directory under the cursor, or opens the file with the OS's default app" },
+      { method: 'enter', title: 'Enter the directory', description: 'Enters the directory under the cursor; does nothing on a file' },
       { method: 'toParent', title: 'Go to the parent directory' },
       { method: 'home', title: 'Go to the home directory' },
       { method: 'back', title: 'Go back', description: 'To the directory shown before, in this pane' },
@@ -250,18 +254,40 @@ class Pane extends Handler {
   }
 
   /**
-   * Enters the directory under the cursor. Opening a file comes with 2.5; until then, it says so.
+   * Enters the directory under the cursor, or opens the file with the OS's default app (2.5). The command
+   * is done once the app is asked for — not waiting for the launcher, whose failure is reported when it
+   * comes.
    */
   async open() {
     const entry = this.state.entries[this.state.cursor];
+    if (entry?.type === 'directory') {
+      await this.enter();
+      return;
+    }
     if (!entry) {
       return;
     }
-    if (entry.type !== 'directory') {
-      this.notify("Opening files isn't supported yet");
-      return;
+    const uri = childUri(this.state.uri, entry.name);
+    if (entry.type !== 'file') {
+      throw failure(entry.type === 'unknown'
+        ? `Can't open ${entry.name}: the link's target is missing`
+        : `Can't open ${entry.name}: only files open with an app`);
     }
-    await this.#go(canonical(childUri(this.state.uri, entry.name)), null);
+    let path;
+    try {
+      path = paths.fromUri(uri);
+    } catch {
+      throw failure(`Can't open ${paths.displayUri(uri)}: only files on this computer open with an app, for now`);
+    }
+    opener.openWithDefaultApp(path).catch((error) => this.report(error));
+  }
+
+  /** Enters the directory under the cursor; on anything else, does nothing. */
+  async enter() {
+    const entry = this.state.entries[this.state.cursor];
+    if (entry?.type === 'directory') {
+      await this.#go(canonical(childUri(this.state.uri, entry.name)), null);
+    }
   }
 
   /**
