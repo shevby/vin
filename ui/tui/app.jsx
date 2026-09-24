@@ -1,12 +1,7 @@
 import { Box, Text } from 'ink';
 
-/** @typedef {import('../../src/vin.js')} Vin */
-
-/**
- * Root TUI component.
- * @param {{ vin: Vin }} props
- */
-export function App({ vin }) {
+/** Root TUI component. It reaches the backend only through handles from `./handler.js`. */
+export function App() {
   return (
     <Box borderStyle="round" paddingX={1}>
       <Text>vin — press Ctrl+C to quit</Text>

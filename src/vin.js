@@ -1,6 +1,7 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const Handler = require('./handler');
+const { createInProcessTransport } = require('./transport');
 const { log } = require('./log');
 
 /** Manages every handler and the event system between them, and starts the UI. */
@@ -102,9 +103,10 @@ class Vin {
       await this.init();
       // The UI is ESM (Ink can't be require()d), so this is the one dynamic import across the boundary.
       const entry = pathToFileURL(path.join(__dirname, '..', 'dist', 'tui.mjs')).href;
-      /** @type {{ start(vin: Vin): Promise<void> }} */
+      /** @type {{ start(transport: import('./transport').Transport): Promise<void> }} */
       const ui = await import(entry);
-      await ui.start(this);
+      // The TUI shares this process, so it gets a transport that calls straight in.
+      await ui.start(createInProcessTransport(this));
       failed = false;
     } finally {
       await this.dispose().catch((error) => {

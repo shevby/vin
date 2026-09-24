@@ -58,7 +58,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
     - `this.update(state)` — fully replaces the window's state (model) and registers its top-level properties (components whose selected slice changed re-render).
     - `this.state.<propName>.<subPropName> = …` — edits a single property (triggers a re-render of just its subscribers, via `useSelector` on the React side).
     - Rules (`src/state.js`): state is JSON data only (no `undefined`, class instances, `Map`, `Date`, …), since the same messages go over JSON-RPC. Top-level properties come only from `update()` — assigning or deleting an unregistered one throws; nested objects take new keys freely. Values are copied in and out, so state never shares objects with callers or the UI. Arrays can't get holes (remove items with `splice()`), and an array method like `push` or `sort` is sent as one patch of the whole array. A reference read from `this.state` goes stale once its object is replaced or moves (e.g. after `shift()`), and writing through it throws — read it again from `this.state`.
-    - The UI declares nothing: `ui/tui/common/store/` mirrors whatever state a handler sends, and components read it with `useSelector(store, (state) => state.cwd)`.
+    - The UI declares nothing: `ui/tui/common/store/` mirrors whatever state a handler sends, and components read it with `useSelector(init('main.left').store, (state) => state.cwd)`.
   - Plugins come in two tiers:
     - **Native plugins** — in-process `Handler` subclasses, `require`d directly; for performance-sensitive built-ins.
     - **Foreign plugins** — out-of-process, written in any technology, talking to `Vin` over JSON-RPC over stdio (the same [`vscode-jsonrpc`](https://www.npmjs.com/package/vscode-jsonrpc)-style channel already used to talk to the UI) — this also gives them a natural sandboxing boundary.
@@ -73,7 +73,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
 - UI:
   - Talks to the backend over JSON-RPC, or directly where that's unnecessary (e.g. the TUI, which runs in the same process).
   - Entry points (TUI example):
-    - `ui/tui/handler.js` — exposes `init(handlerName)`, creating an instance for calling methods on the named backend handler (via JSON-RPC or as a direct proxy).
+    - `ui/tui/handler.js` — exposes `init(handlerName)`, creating an instance for calling methods on the named backend handler (via JSON-RPC or as a direct proxy). The handle chains names (`init('main').left.navigate('/tmp')` returns a promise of the result); `store`, `path`, and `then` are its own properties, so a sub-handler or method with one of those names is reached through `init('main.store')`. `connect(transport)` wires it to the backend first.
     - `ui/tui/index.jsx` — UI initialization entry point.
     - `ui/tui/<handler-name>/<handler-name>.jsx` — UI entry point for that handler.
     - `ui/tui/<handler-name>/index.js` — re-export, for a more convenient import path.
@@ -82,6 +82,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - The UI holds its own copy of a window's state (its store); the backend is authoritative. `this.state.x = y` updates the backend's copy and sends an update so the UI's copy converges — it doesn't reach into the UI's memory directly. This is what makes the same API work whether UI and backend share a process (the TUI today) or run as two separate processes (e.g. a future Electron main/renderer split): the wire message is the same either way, only the transport changes.
   - The backend only ever talks to the UI by changing properties on its state (model), or replacing the whole model.
   - The UI calls backend functions over JSON-RPC, or — for the TUI — directly or through a proxy.
+  - Both go through a `Transport` (`src/transport.js`) with two operations — `call(path, args)` and `subscribe(handler, listener)`. `Vin` hands the TUI an in-process one; it still copies arguments and results as JSON and reduces errors to their message and `code`, so nothing works in-process that would break over JSON-RPC. The UI never imports `Vin` or handlers directly.
   - Every handler has a name, and every UI window connects to its handler by that name — a sub-handler's name is the dotted chain down to it (`handler.subhandler`), so `handler.subhandler.method()` calls `method` on that sub-handler directly.
 - File access: a `FileSystemProvider`-style interface (`stat`, `readDirectory`, `readFile`, `writeFile`, `rename`, `delete`, `watch`, …), implemented once per protocol and consumed uniformly everywhere else (modeled on VS Code's `FileSystemProvider`).
   - First iteration: local disk only.
@@ -132,7 +133,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.1 `Handler` base class — name, sub-handlers nested to any depth, dotted-path addressing (`handler.subhandler.method()`), lifecycle (init/dispose).
 - [x] 1.2 State API — `this.state` as a deep proxy that records edits as path-based patches; `this.update(state)` for full replacement; patches from one tick batched into one message.
 - [x] 1.3 UI store and `useSelector` — a per-window mirror of handler state that applies patches; built on React's `useSyncExternalStore`, so only components reading a changed path re-render.
-- [ ] 1.4 In-process transport and `ui/tui/handler.js` (`init(handlerName)`) — the TUI's direct proxy, using the same message shapes the JSON-RPC transport will (4.5).
+- [x] 1.4 In-process transport and `ui/tui/handler.js` (`init(handlerName)`) — the TUI's direct proxy, using the same message shapes the JSON-RPC transport will (4.5).
 - [ ] 1.5 Event system — `Vin`-level bus for events between handlers (and later plugins); subscriptions released on dispose.
 - [ ] 1.6 Contribution registry — the one extension-point mechanism for commands (with `tui`/`cli` surface flags), context-menu entries, and keybindings.
 - [ ] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
