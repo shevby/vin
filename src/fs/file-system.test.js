@@ -59,18 +59,22 @@ test("a URI's scheme picks the provider, in any case", async () => {
   assert.throws(() => fileSystem.register('1x', fakeProvider([])), /Invalid URI scheme "1x"/);
   assert.throws(() => fileSystem.register('a:b', fakeProvider([])), /Invalid URI scheme/);
   unregister();
-  await rejectsWith(fileSystem.stat('mem:/a'), 'ENOPROVIDER', /no file system provider for "mem:"/);
-  await rejectsWith(fileSystem.stat('C:\\x'), 'ENOPROVIDER', /no file system provider for "C:"/);
-  await rejectsWith(fileSystem.readFile('/etc/hosts'), 'ENOPROVIDER', /isn't a URI; a path needs paths\.toUri\(\)/);
+  await rejectsWith(fileSystem.stat('mem:/a'), 'ENOPROVIDER', /^ENOPROVIDER: No file system for "mem:", 'mem:\/a'$/);
+  await rejectsWith(fileSystem.stat('C:\\x'), 'ENOPROVIDER', /No file system for "C:"/);
+  // A path where a URI belongs is a bug, not a failure to report.
+  await assert.rejects(fileSystem.readFile('/etc/hosts'), {
+    name: 'TypeError',
+    message: /isn't a URI; a path needs paths\.toUri\(\)/,
+  });
 });
 
 test('moving or copying between providers waits for 5.5; one without copy says so', async () => {
   const fileSystem = new FileSystem();
   fileSystem.register('a', fakeProvider([]));
   fileSystem.register('b', fakeProvider([]));
-  await rejectsWith(fileSystem.rename('a:/x', 'b:/x'), 'EXDEV', /can't move between file systems yet/);
-  await rejectsWith(fileSystem.copy('a:/x', 'b:/x'), 'EXDEV', /can't copy between file systems yet/);
-  await rejectsWith(fileSystem.copy('a:/x', 'a:/y'), 'ENOSYS', /can't copy on its own yet/);
+  await rejectsWith(fileSystem.rename('a:/x', 'b:/x'), 'EXDEV', /Can't move between file systems yet, 'a:\/x' -> 'b:\/x'$/);
+  await rejectsWith(fileSystem.copy('a:/x', 'b:/x'), 'EXDEV', /Can't copy between file systems yet/);
+  await rejectsWith(fileSystem.copy('a:/x', 'a:/y'), 'ENOSYS', /This file system can't copy yet/);
 });
 
 test('handlers reach the local disk as this.fs', async (t) => {

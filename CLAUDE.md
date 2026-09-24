@@ -33,7 +33,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
 - Always write JSDoc for every class, function, method, and exported value — `@param`, `@returns`, `@typedef`, `@type` — so VS Code gives autocompletion and hover docs in plain JS.
 - When JSDoc isn't enough (overloads, complex generics, a plugin-facing API, or the shape of a module crossing the CommonJS/ESM boundary), add a `.d.ts` next to the file (`foo.js` → `foo.d.ts`). A sibling `.d.ts` replaces the inferred types for everyone importing that file, so keep it complete and in sync.
 - `jsconfig.json` configures VS Code's JS language service (module resolution, JSX) with `checkJs` on, so type errors show in the editor; `npm run typecheck` runs the same check with TypeScript 7, which is used only as a checker, never to compile. `@types/node` is pinned to the Node major version in use.
-- Debug output goes through `log` from `src/log.js`, never `console` — Ink owns stdout/stderr while the TUI runs. Set `VIN_LOG=<file>` to enable it; unset, logging is a no-op.
+- Debug output goes through `log` from `src/log.js`, never `console` — Ink owns stdout/stderr while the TUI runs. Unset, `VIN_LOG` sends errors only to `vin.log` in the project root (git-ignored); `VIN_LOG=<file>` logs every level there instead, and an empty one turns logging off (as `test/setup.js` does).
 
 ## Project Structure
 
@@ -84,12 +84,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
     - The UI draws the bottom window full-size and the rest as centered overlays (`ui/tui/common/windows/`), each by the component for its kind (`ui/tui/windows.js`), and releases a closed window's stores (`release(path)` in `ui/tui/handler.js`).
   - Configuration (`src/config.js`) — `config.json5` in the project root (git-ignored; vin's files stay in the project — config next to `plugins/`, not in per-OS config directories), created on first start listing every declared option, commented out. Options are contributions (`configuration`: `{ key, type, default, description?, enum?, minimum?, maximum? }`) set in the file under their kind (`pane: { showHidden: true }`); any handler reads any option with `this.config.get('pane.showHidden')`. `start()` parses the file before `init()` (invalid values read as their defaults meanwhile) and checks it after; any mistake — syntax, unknown section/option/command, wrong type — stops vin before the UI with every problem as `file:line:col`.
     - Options are known once a handler of their kind is initialized, so a kind created later (a dialog) can't declare options yet — its section would be reported as unknown.
-  - Main entry points:
-    - `src/vin.js` — the `Vin` class: standalone, manages handlers and the event system, and starts the UI, connecting it to them.
-    - `src/handler.js` — the `Handler` base class.
-    - `src/contributions.js` — the contribution registry; `src/events.js` — the event bus; `src/transport.js` — the UI transport.
-    - `src/handlers/<handler-name>/` — sources for each Handler; sub-handlers nest the same way, e.g. `src/handlers/<handler-name>/<subhandler-name>/`.
-    - `index.js` (repo root) — application entry point; creates `Vin` and starts the app.
+  - Main entry points: `index.js` (repo root) creates `Vin` (`src/vin.js`) and starts it; `src/handler.js` is the `Handler` base class; `src/handlers/<handler-name>/` holds each handler's sources, with sub-handlers nested the same way (`src/handlers/<handler-name>/<subhandler-name>/`).
 - UI:
   - Talks to the backend over JSON-RPC, or directly where that's unnecessary (e.g. the TUI, which runs in the same process).
   - Entry points (TUI example):
@@ -100,10 +95,11 @@ A vifm-inspired terminal file manager with support for network protocols and use
     - `ui/tui/common/<name>/` — shared UI elements, including ones wired to backend handlers.
 - Frontend/backend communication:
   - The UI holds its own copy of a window's state (its store); the backend is authoritative. `this.state.x = y` updates the backend's copy and sends an update so the UI's copy converges — it doesn't reach into the UI's memory directly. This is what makes the same API work whether UI and backend share a process (the TUI today) or run as two separate processes (e.g. a future Electron main/renderer split): the wire message is the same either way, only the transport changes.
-  - The backend only ever talks to the UI by changing properties on its state (model), or replacing the whole model.
-  - The UI calls backend functions over JSON-RPC, or — for the TUI — directly or through a proxy.
+  - The backend only ever talks to the UI by changing properties on its state (model), or replacing the whole model; the UI calls backend functions over JSON-RPC, or — for the TUI — directly or through a proxy.
   - Both go through a `Transport` (`src/transport.js`) with two operations — `call(path, args)` and `subscribe(handler, listener)`. `Vin` hands the TUI an in-process one; it still copies arguments and results as JSON and reduces errors to their message and `code`, so nothing works in-process that would break over JSON-RPC. The UI never imports `Vin` or handlers directly.
   - Every handler has a name, and every UI window connects to its handler by that name — a sub-handler's name is the dotted chain down to it (`handler.subhandler`), so `handler.subhandler.method()` calls `method` on that sub-handler directly.
+- Errors (`src/errors.js`, `src/messages.js`) — nothing that fails takes vin down. A failure is *expected* when its `code` says so (the file system's `ENOENT`, `EACCES`, …; the network's; vin's `EPATH`, `ECONFIG`, and `EFAIL` from `failure(message)`) — the code, since that's what survives JSON-RPC. It's shown in words (`Permission denied: ~/x`); anything else is a bug, shown as unexpected and logged with its stack. Messages live in `vin.messages`, mirrored in `core`'s `messages` state; `core.press` clears them, so each stays until the next key. What reports: commands run by keys, event listeners, window disposal, handlers (`this.report(error)`, `this.notify(text, level)`), and — while the UI runs — uncaught exceptions and unhandled rejections, after which vin carries on.
+  - The TUI shows one message that fits on the bottom line, and more in a popup that a key only dismisses (`core.clearMessages(upTo)`); a window whose component throws shows the error in its place.
 - Paths (`src/paths.js`) — kept in native absolute form; `paths.resolve(input, base)` reads any typed or pasted form (or throws an `EPATH` error with the reason), `paths.display(path)` shows it Unix-style. Its header lists the Windows edge cases.
 - File access (`src/fs/`): a `FileSystemProvider` interface (`stat`, `readDirectory`, `createDirectory`, `readFile`, `writeFile`, `delete`, `rename`, optional `copy`, read/write streams, `watch`), implemented once per protocol and consumed uniformly everywhere else (modeled on VS Code's `FileSystemProvider`). Resources are URI strings (`file:///C:/Users/me`; `paths.toUri()`/`fromUri()`) whose scheme picks the provider; handlers use `this.fs`, which dispatches. Every provider fails with Node's `fs` error codes (`ENOENT`, `EEXIST`, …), and never replaces anything unless asked (`{ overwrite: true }`).
   - The local disk (`src/fs/local.js`) is the only provider so far; moving between providers waits for 5.5, the OS trash for 2.9.
@@ -162,7 +158,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.9 Configuration — `config.json5` in the project root, user values merged over defaults declared in code, validated with readable errors.
 - [x] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays Unix-style (`~/…`, `/c/…`), keeping the native form for the OS.
 - [x] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
-- [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
+- [x] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
 - [ ] 1.14 Standard dialogs — confirm, text input, and choice list as reusable windows (1.8), with their keys, for delete (2.9), rename and create (2.7), conflict prompts (2.10), and passphrases (5.2). *(proposed)*
 
 ### 2. Local file manager (MVP)

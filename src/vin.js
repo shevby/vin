@@ -10,11 +10,12 @@ const Core = require('./handlers/core/core');
 const { setHost } = require('./host');
 const { createInProcessTransport } = require('./transport');
 const { log } = require('./log');
+const { Messages, catchUncaught } = require('./messages');
 const { WindowStack } = require('./windows');
 
 /**
- * Manages every handler, the event system, the contribution registry, and the window stack between them,
- * and starts the UI.
+ * Manages every handler, the event system, the contribution registry, the window stack, and the messages
+ * shown to the user between them, and starts the UI.
  * The built-in `core` handler is always registered first.
  */
 class Vin {
@@ -35,10 +36,17 @@ class Vin {
      */
     this.handlers = new Map();
     /**
+     * The messages the UI shows — errors, and notices from handlers (`Handler#notify`, `Handler#report`).
+     * @readonly
+     */
+    this.messages = new Messages();
+    /** @type {import('./messages').ErrorReporter} */
+    const report = (error, context) => this.messages.report(error, context);
+    /**
      * The event bus between handlers; see `Handler#emit` and `Handler#on`.
      * @readonly
      */
-    this.events = new EventBus();
+    this.events = new EventBus({ report });
     /**
      * Extension points and what handlers contribute to them; see `Handler.contributes`.
      * @readonly
@@ -48,7 +56,7 @@ class Vin {
      * The open windows and the focus; see `openWindow()` and `Handler#openWindow`.
      * @readonly
      */
-    this.windows = new WindowStack();
+    this.windows = new WindowStack({ report });
     /**
      * The user's configuration; handlers read it as `this.config`.
      * @readonly
@@ -65,6 +73,7 @@ class Vin {
       windows: this.windows,
       config: this.config.reader,
       fs: this.fs,
+      messages: this.messages,
       attach: (handler) => {
         const detach = this.registry.attach(handler);
         return () => {
@@ -73,7 +82,7 @@ class Vin {
         };
       },
     };
-    this.register(new Core(this.registry, this.windows));
+    this.register(new Core(this.registry, this.windows, this.messages));
   }
 
   /**
@@ -182,7 +191,8 @@ class Vin {
   /**
    * Loads the config file, initializes the handlers, and checks the config against the options they declare
    * (creating the file, listing them, if there's none); then loads the built TUI (`npm run build`) and runs
-   * it until it exits, and disposes the handlers.
+   * it until it exits, and disposes the handlers. While the UI runs, an uncaught exception or unhandled
+   * rejection is reported as a message instead of ending the process.
    * @returns {Promise<void>}
    * @throws {import('./config').ConfigError} If the config file has mistakes — before the UI starts.
    */
@@ -199,8 +209,13 @@ class Vin {
       const entry = pathToFileURL(path.join(__dirname, '..', 'dist', 'tui.mjs')).href;
       /** @type {{ start(transport: import('./transport').Transport): Promise<void> }} */
       const ui = await import(entry);
-      // The TUI shares this process, so it gets a transport that calls straight in.
-      await ui.start(createInProcessTransport(this));
+      const release = catchUncaught(this.messages);
+      try {
+        // The TUI shares this process, so it gets a transport that calls straight in.
+        await ui.start(createInProcessTransport(this));
+      } finally {
+        release();
+      }
       failed = false;
     } finally {
       await this.dispose().catch((error) => {

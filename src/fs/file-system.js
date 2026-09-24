@@ -77,13 +77,18 @@
  */
 
 /**
- * An error shaped like Node's `fs` errors.
+ * An error shaped like Node's `fs` errors — `code`, and the `path` and `dest` it concerns — plus the
+ * `reason` in words for the user, which `describeError()` (`src/errors.js`) shows instead of the code's
+ * generic one.
  * @param {string} code E.g. `EEXIST`.
- * @param {string} message
- * @returns {Error & { code: string }}
+ * @param {string} reason E.g. `Can't copy a file onto itself`.
+ * @param {{ path?: string, dest?: string }} [where] Paths or URIs.
+ * @returns {Error & { code: string, reason: string, path?: string, dest?: string }}
  */
-function fsError(code, message) {
-  return Object.assign(new Error(`${code}: ${message}`), { code });
+function fsError(code, reason, where = {}) {
+  const quoted = [where.path, where.dest].filter((item) => item !== undefined).map((item) => `'${item}'`);
+  const message = `${code}: ${reason}${quoted.length ? `, ${quoted.join(' -> ')}` : ''}`;
+  return Object.assign(new Error(message), { code, reason }, where);
 }
 
 /** A URI's scheme: a letter, then letters, digits, `+`, `-` or `.` (RFC 3986). */
@@ -124,15 +129,16 @@ class FileSystem {
    * @param {string} uri
    * @returns {FileSystemProvider} The provider for its scheme.
    * @throws {Error} With code `ENOPROVIDER`, if no provider handles it.
+   * @throws {TypeError} If `uri` isn't a URI — a path passed by mistake.
    */
   provider(uri) {
     const scheme = SCHEME.exec(uri)?.[1];
     if (!scheme) {
-      throw fsError('ENOPROVIDER', `"${uri}" isn't a URI; a path needs paths.toUri()`);
+      throw new TypeError(`"${uri}" isn't a URI; a path needs paths.toUri()`);
     }
     const provider = this.#providers.get(scheme.toLowerCase());
     if (!provider) {
-      throw fsError('ENOPROVIDER', `no file system provider for "${scheme}:" (${uri})`);
+      throw fsError('ENOPROVIDER', `No file system for "${scheme}:"`, { path: uri });
     }
     return provider;
   }
@@ -146,7 +152,7 @@ class FileSystem {
   #same(from, to, action) {
     const provider = this.provider(from);
     if (this.provider(to) !== provider) {
-      throw fsError('EXDEV', `can't ${action} between file systems yet, ${from} -> ${to}`);
+      throw fsError('EXDEV', `Can't ${action} between file systems yet`, { path: from, dest: to });
     }
     return provider;
   }
@@ -194,7 +200,7 @@ class FileSystem {
     const provider = this.#same(from, to, 'copy');
     if (!provider.copy) {
       // Streaming within one provider joins streaming between providers, in 2.10 and 5.5.
-      throw fsError('ENOSYS', `this file system can't copy on its own yet, ${from} -> ${to}`);
+      throw fsError('ENOSYS', "This file system can't copy yet", { path: from, dest: to });
     }
     return provider.copy(from, to, options);
   }

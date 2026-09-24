@@ -20,4 +20,5 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
 - `Escape` closes the window on top (a dialog, a menu), never the main window.
+- A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
 - Everything else: TBD, added as it's built and tried out.

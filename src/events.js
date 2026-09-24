@@ -26,12 +26,22 @@ const { cloneData, deepFreeze } = require('./state');
 class EventBus {
   /** @type {Map<string, Set<EventListener>>} */
   #listeners = new Map();
+  /** @type {import('./messages').ErrorReporter} */
+  #report;
+
+  /**
+   * @param {object} [options]
+   * @param {import('./messages').ErrorReporter} [options.report] Gets a listener's failure. Default: logs it.
+   */
+  constructor({ report = (error, context) => log.error(`${context}:`, error) } = {}) {
+    this.#report = report;
+  }
 
   /**
    * Listens for an event by its full name.
    * @param {string} name `<handler path>.<event>`, e.g. `main.left.changed`.
    * @param {EventListener} listener Called with the payload and `{ name, source }`. One that throws or
-   *   rejects is logged and doesn't stop the others.
+   *   rejects is reported and doesn't stop the others.
    * @returns {() => void} Stops listening.
    * @throws {TypeError} If `name` isn't a handler path followed by an event name.
    */
@@ -84,10 +94,10 @@ class EventBus {
         try {
           const result = listener(data, event);
           if (result instanceof Promise) {
-            result.catch((error) => log.error(`Listener for event "${name}" failed:`, error));
+            result.catch((error) => this.#report(error, `Listener for event "${name}" failed`));
           }
         } catch (error) {
-          log.error(`Listener for event "${name}" failed:`, error);
+          this.#report(error, `Listener for event "${name}" failed`);
         }
       }
     });
