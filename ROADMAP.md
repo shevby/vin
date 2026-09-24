@@ -105,4 +105,5 @@ Design deferred (see Use Cases and Interactions).
 - [ ] 7.10 Distribution as a single executable — and then where `config.json5` and `plugins/` live, since they sit in the project root until then.
 - [ ] 7.11 Electron + React GUI — out of scope (Tech Stack 3); the architecture keeps it possible.
 - [ ] 7.12 Stacked panes — the split top/bottom as well as side by side (vifm's `ctrl+w s`), with a config option for the starting orientation. *(proposed)*
+- [ ] 7.13 Mouse support — clicks, the wheel, and right-click for the context menu (3.1), through the terminal's mouse reporting (SGR, `?1006`). The TUI hit-tests boxes (`measureElement`) and calls the same commands keys do, so the backend never sees coordinates. Ink passes mouse sequences on as input (`[<0;10;5M`), so the key hook must filter them out; reporting must be switched off on exit, on a crash, and during a terminal takeover (2.5). An extra where the terminal allows it, with a config option to turn it off: it works in cmd, but not in Git Bash's own window (mintty), even through `winpty`.
 
