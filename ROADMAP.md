@@ -33,7 +33,7 @@ Section names in parentheses (Tech Stack 2, Architecture, Glossary, …) refer t
 
 ## 2. Local file manager (MVP)
 
-- [ ] 2.1 Main window — two-pane split view (the panes as sub-handlers of its handler), switching the active pane, optional single-pane mode.
+- [x] 2.1 Main window — two-pane split view (the panes as sub-handlers of its handler), switching the active pane, optional single-pane mode.
 - [ ] 2.2 Directory listing — windowed rows (Tech Stack 2); `readdir` with file types first, `stat` lazily so huge directories open instantly; name/size/modified columns; markers and colors for directories, symlinks, and executables; long names truncated.
 - [ ] 2.3 Navigation — cursor movement, enter directory / go to parent, top/bottom, page up/down, home; returning to a parent puts the cursor on the directory you came from; back/forward history.
 - [ ] 2.4 Windows drives — the parent of `C:\` is a list of drives (Node has no API for this; probe drive letters or ask the OS).
@@ -51,6 +51,7 @@ Section names in parentheses (Tech Stack 2, Architecture, Glossary, …) refer t
 - [ ] 2.16 Help window — generated from the contribution registry, so plugin keys and commands appear automatically.
 - [ ] 2.17 Session state — restore each pane's directory and view options on start; a `--choose-dir`-style option (vifm has one) so a shell function can `cd` to vin's last directory on exit.
 - [ ] 2.18 Startup paths — `vin [left-path] [right-path]` opens the panes there, as vifm does.
+- [ ] 2.20 Quitting — a `core.quit` command, bound to vifm's `ZZ` (and `:q` once 6 lands), that exits through keybindings like everything else; today only Ctrl+C quits, handled by Ink before keybindings see it. *(proposed)*
 
 ## 3. Context menu and CLI
 
@@ -103,4 +104,5 @@ Design deferred (see Use Cases and Interactions).
 - [ ] 7.9 Image previews in terminals with a graphics protocol (Kitty, Sixel).
 - [ ] 7.10 Distribution as a single executable — and then where `config.json5` and `plugins/` live, since they sit in the project root until then.
 - [ ] 7.11 Electron + React GUI — out of scope (Tech Stack 3); the architecture keeps it possible.
+- [ ] 7.12 Stacked panes — the split top/bottom as well as side by side (vifm's `ctrl+w s`), with a config option for the starting orientation. *(proposed)*
 

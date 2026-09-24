@@ -16,12 +16,19 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 ## Keys
 
 - Arrow keys and `hjkl` for navigation.
-- `Tab` to switch between split views.
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
 - `Escape` closes the window on top (a dialog, a menu), never the main window.
 - A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
 - Everything else: TBD, added as it's built and tried out.
+
+## Panes
+
+As in vifm:
+
+- `Tab`, `ctrl+w w`, `ctrl+w ctrl+w` — switch to the other pane.
+- `ctrl+w h`, `ctrl+w l` — switch to the left or the right pane.
+- `ctrl+w o` (`ctrl+w ctrl+o`) — show only the active pane; `Tab` then swaps which one is shown. `ctrl+w v` shows both again. `main.singlePane` in the config starts vin with one.
 
 ## Dialogs
 

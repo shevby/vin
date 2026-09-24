@@ -195,6 +195,24 @@ class Paths {
   }
 
   /**
+   * Shows a location given as a URI: a `file:` URI as its path (`display()`), anything else as it is
+   * (`sftp://host/x`).
+   * @param {string} uri
+   * @returns {string}
+   */
+  displayUri(uri) {
+    if (!/^file:/i.test(uri)) {
+      return uri;
+    }
+    try {
+      return this.display(this.fromUri(uri));
+    } catch {
+      // Not a path on this OS — shown as given.
+      return uri;
+    }
+  }
+
+  /**
    * The `file:` URI of a path — how the file system (`src/fs/`) addresses it: `file:///C:/a%20b`,
    * `file://server/share/x`, `file:///home/me/x`.
    * @param {string} path As `resolve()` returns it.

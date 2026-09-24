@@ -156,3 +156,13 @@ test('disposing vin settles every open window with null', async () => {
   assert.equal(await answer, null);
   assert.deepEqual(vin.windows.windows, []);
 });
+
+test('a lasting window opens focused on what it focused before it opened', async () => {
+  const vin = new Vin();
+  const root = new Handler('root');
+  const inner = root.add(new Handler('inner'));
+  vin.register(root);
+  inner.focus();
+  await vin.openWindow('root');
+  assert.equal(vin.windows.focused, inner);
+});

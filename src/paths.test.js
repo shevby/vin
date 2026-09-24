@@ -161,6 +161,13 @@ test('converts paths to file: URIs and back', () => {
   assert.throws(() => unix.fromUri('file://host/x'), (error) => error instanceof PathError);
 });
 
+test('shows a file: URI as its path, and any other URI as it is', () => {
+  assert.equal(windows.displayUri('file:///C:/Program%20Files'), '/c/Program Files');
+  assert.equal(unix.displayUri('file:///srv/a%20b'), '/srv/a b');
+  assert.equal(windows.displayUri('sftp://host/x'), 'sftp://host/x');
+  assert.equal(unix.displayUri('file://host/x'), 'file://host/x', "a path Unix can't have");
+});
+
 test('equals ignores case on Windows only', () => {
   assert.ok(windows.equals('C:\\Users', 'c:\\USERS'));
   assert.ok(!unix.equals('/Users', '/users'));

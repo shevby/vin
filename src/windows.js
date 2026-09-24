@@ -42,6 +42,19 @@ function isWithin(handler, ancestor) {
 }
 
 /**
+ * The top-level handler of `handler`'s tree.
+ * @param {Handler} handler
+ * @returns {Handler}
+ */
+function rootOf(handler) {
+  let root = handler;
+  while (root.parent) {
+    root = root.parent;
+  }
+  return root;
+}
+
+/**
  * The windows open in the UI, bottom to top, and the focus within each. Only the top window's focus
  * counts: keys go to it and the handlers around it, up to the window's own handler — never to the windows
  * it covers.
@@ -66,6 +79,12 @@ class WindowStack {
    * @type {Map<Handler, Handler>}
    */
   #opening = new Map();
+  /**
+   * The focus a lasting window will open with, by the top-level handler of its tree — set by `focus()`
+   * before the window opens (the main window focusing a pane in its `onInit()`).
+   * @type {WeakMap<Handler, Handler>}
+   */
+  #preferred = new WeakMap();
   /** @type {import('./messages').ErrorReporter} */
   #report;
 
@@ -104,7 +123,7 @@ class WindowStack {
 
   /**
    * Opens an initialized handler as a lasting window — the main window. It stays until the handler is
-   * disposed.
+   * disposed. It opens focused on the handler, or on the one within it that called `focus()` before.
    * @param {Handler} handler
    * @throws {Error} If it's already open.
    */
@@ -112,7 +131,14 @@ class WindowStack {
     if (this.#entries.some((entry) => entry.handler === handler)) {
       throw new Error(`Window "${handler.path}" is already open`);
     }
-    this.#entries.push({ id: ++this.#lastId, handler, focus: handler, transient: false, resolve: () => {} });
+    const root = rootOf(handler);
+    const preferred = this.#preferred.get(root);
+    let focus = handler;
+    if (preferred && isWithin(preferred, handler)) {
+      focus = preferred;
+      this.#preferred.delete(root);
+    }
+    this.#entries.push({ id: ++this.#lastId, handler, focus, transient: false, resolve: () => {} });
     this.#notify();
   }
 
@@ -194,9 +220,9 @@ class WindowStack {
 
   /**
    * Focuses `handler` within its window. If the window is covered, the focus takes effect once it's on top;
-   * if it's still opening (`openTransient()`), once it opens.
+   * if it's still opening (`openTransient()`), once it opens. If it's in no window yet, it's kept for when
+   * its tree opens as a lasting window (`open()`).
    * @param {Handler} handler
-   * @throws {Error} If `handler` isn't in an open or opening window.
    */
   focus(handler) {
     for (let node = /** @type {Handler | null} */ (handler); node; node = node.parent) {
@@ -213,7 +239,7 @@ class WindowStack {
         return;
       }
     }
-    throw new Error(`Handler "${handler.path}" isn't in an open window, so it can't take the focus`);
+    this.#preferred.set(rootOf(handler), handler);
   }
 
   /**
