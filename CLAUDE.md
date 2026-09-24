@@ -60,8 +60,8 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - Talks to the backend over JSON-RPC, or directly where that's unnecessary (e.g. the TUI, which runs in the same process).
   - Entry points (TUI example):
     - `ui/tui/handler.js` — exposes `init(handlerName)`, creating an instance for calling methods on the named backend handler (via JSON-RPC or as a direct proxy).
-    - `ui/tui/index.js` — UI initialization entry point.
-    - `ui/tui/<handler-name>/<handler-name>.js` — UI entry point for that handler.
+    - `ui/tui/index.jsx` — UI initialization entry point.
+    - `ui/tui/<handler-name>/<handler-name>.jsx` — UI entry point for that handler.
     - `ui/tui/<handler-name>/index.js` — re-export, for a more convenient import path.
     - `ui/tui/common/<name>/` — shared UI elements, including ones wired to backend handlers.
 - Frontend/backend communication:
@@ -97,4 +97,106 @@ Keybindings live in [CONTROLS.md](CONTROLS.md), kept separate since they're not 
 - Run tests before merging into `master`.
 - A bug fix should add a test covering the regression it fixes, when that's reasonable and doesn't take too long — not a hard requirement.
 - Never delete branches or squash commits.
+
+## TODO
+
+Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are stable — don't renumber when items are added, finished, or dropped; a new item takes the next free number in its milestone. Keys for any of these features go in [CONTROLS.md](CONTROLS.md).
+
+### 0. Foundation
+
+- [x] 0.1 Git repo on `master`, branch per feature/fix.
+- [x] 0.2 Project skeleton — CommonJS backend, ESM UI, `Vin` entry point, `node --test`.
+- [x] 0.3 JSX build with esbuild (`npm start`, `npm run dev`).
+- [x] 0.4 JSDoc, `jsconfig.json`, and `@types/*` for VS Code autocompletion.
+- [ ] 0.5 `npm run typecheck` — TypeScript as a dev-only checker of the JSDoc types (`tsc --noEmit`; code stays plain JS); run it with the tests before merging.
+- [ ] 0.6 Tests for `.jsx` components — `node --test` can't parse JSX, so transpile test files with esbuild or register a loader hook; render with [ink-testing-library](https://github.com/vadimdemedes/ink-testing-library) (it doesn't declare supported Ink versions — verify it works with Ink 7).
+- [ ] 0.7 `prepare` script that builds `dist/` (it's git-ignored), so a fresh `npm install` + `npm link` gives a working global `vin`.
+- [ ] 0.8 Debug log file — stdout/stderr belong to Ink while the TUI runs.
+
+### 1. Core architecture
+
+- [ ] 1.1 `Handler` base class — name, sub-handlers nested to any depth, dotted-path addressing (`handler.subhandler.method()`), lifecycle (init/dispose).
+- [ ] 1.2 State API — `this.state` as a deep proxy that records edits as path-based patches; `this.update(state)` for full replacement; patches from one tick batched into one message.
+- [ ] 1.3 UI store and `useSelector` — a per-window mirror of handler state that applies patches; built on React's `useSyncExternalStore`, so only components reading a changed path re-render.
+- [ ] 1.4 In-process transport and `ui/tui/handler.js` (`init(handlerName)`) — the TUI's direct proxy, using the same message shapes the JSON-RPC transport will (4.5).
+- [ ] 1.5 Event system — `Vin`-level bus for events between handlers (and later plugins); subscriptions released on dispose.
+- [ ] 1.6 Contribution registry — the one extension-point mechanism for commands (with `tui`/`cli` surface flags), context-menu entries, and keybindings.
+- [ ] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
+- [ ] 1.8 TUI window manager — overlays (see Glossary) stacked over the main view, with focus and key input routed to the topmost one.
+- [ ] 1.9 Configuration — a JSON5 file in the per-OS config directory (`$XDG_CONFIG_HOME/vin`, `%APPDATA%\vin`, …), user values merged over defaults, validated with readable errors.
+- [ ] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays the native form.
+- [ ] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
+- [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
+
+### 2. Local file manager (MVP)
+
+- [ ] 2.1 Main window — two-pane split view (the panes as sub-handlers of its handler), switching the active pane, optional single-pane mode.
+- [ ] 2.2 Directory listing — windowed rows (Tech Stack 2); `readdir` with file types first, `stat` lazily so huge directories open instantly; name/size/modified columns; markers and colors for directories, symlinks, and executables; long names truncated.
+- [ ] 2.3 Navigation — cursor movement, enter directory / go to parent, top/bottom, page up/down, home; returning to a parent puts the cursor on the directory you came from; back/forward history.
+- [ ] 2.4 Windows drives — the parent of `C:\` is a list of drives (Node has no API for this; probe drive letters or ask the OS).
+- [ ] 2.5 Opening files — with the OS default app (`start`/`open`/`xdg-open`), or in `$EDITOR`/`$PAGER` through a terminal takeover (suspend Ink, hand over the tty, restore on exit) — the same mechanism later offered to plugins (4.7); "open with" associations in config.
+- [ ] 2.6 Selection — toggle, all/none/invert, range; operations act on the selection, or on the entry under the cursor when nothing is selected.
+- [ ] 2.7 File operations — copy/move (to the other pane, and via yank/paste), rename, delete, create file/directory, create symlink (on Windows this needs Developer Mode or admin rights).
+- [ ] 2.8 Bulk rename — edit the list of selected names in `$EDITOR`, as vifm does.
+- [ ] 2.9 Safe delete — to the OS trash by default; permanent delete behind a confirmation.
+- [ ] 2.10 Long operations — background jobs with progress and cancel, so the UI stays responsive; conflict prompts (overwrite / skip / rename / apply to all).
+- [ ] 2.11 Sorting and hidden files — by name (natural order), extension, size, modified time; ascending/descending; directories first; hidden-files toggle (dotfiles; the Windows hidden attribute isn't in `fs.stat`, so it needs a platform call).
+- [ ] 2.12 Search and filter — incremental search in the listing with next/previous match; a name filter that hides non-matching entries.
+- [ ] 2.13 Preview pane — text files (first few KB, binaries detected), directory contents, file details; loads asynchronously and cancels when the cursor moves on.
+- [ ] 2.14 Status bar — current path, selection count and size, details of the entry under the cursor (size, modified time, permissions/owner on Unix), free space (`fs.statfs`), messages.
+- [ ] 2.15 Auto-refresh — watch the visible directories through the provider, debounced; manual refresh.
+- [ ] 2.16 Help window — generated from the contribution registry, so plugin keys and commands appear automatically.
+- [ ] 2.17 Session state — restore each pane's directory and view options on start; a `--choose-dir`-style option (vifm has one) so a shell function can `cd` to vin's last directory on exit.
+- [ ] 2.18 Startup paths — `vin [left-path] [right-path]` opens the panes there, as vifm does.
+
+### 3. Context menu and CLI
+
+- [ ] 3.1 Context menu (`Space`) — the first extension point: built-in entries (open, open with, rename, copy, move, delete, properties) plus contributed ones, shown by condition (file or directory, single or multiple selection, extension, provider); users hide, reorder, and add entries in config.
+- [ ] 3.2 CLI dispatcher — yargs command modules (yargs 18 loads fine with `require()` on Node 24): `vin` opens the TUI, `vin <handler>.<command> <args>` runs a `cli: true` command, per-handler `--help`, `--version`; plain output and meaningful exit codes for scripting.
+- [ ] 3.3 CLI adapters — build the context the TUI would supply (e.g. target files from arguments), so the handler method runs unchanged.
+- [ ] 3.4 Resolve the ambiguity between `vin <path>` (2.18) and `vin <handler>.<command>` — `zip.zip` could be either; e.g. registered commands win, and `vin ./zip.zip` forces a path.
+
+### 4. Plugins
+
+- [ ] 4.1 Discovery — built-in `plugins/` plus a user plugin directory under the config directory; enable/disable in config.
+- [ ] 4.2 Manifest schema (`plugin.json5`) — name, version, `native`/`foreign`, entry or spawn command (with per-OS overrides, e.g. `python` vs `python3`), protocol version, declared contributions (commands with surfaces, menu entries, keybindings, config options); validated with readable errors.
+- [ ] 4.3 Lazy activation — contributions are read from the manifest, so menus, keybindings, and `vin --help` work without loading or spawning the plugin; it's activated on first use (like VS Code's activation events).
+- [ ] 4.4 Native plugins — `require`d and registered as Handlers; a plugin that throws is disabled with a message instead of taking vin down.
+- [ ] 4.5 Foreign plugin host — spawn, JSON-RPC over stdio (`vscode-jsonrpc`), protocol-version handshake, shutdown on exit, crash detection; the plugin's stderr goes to the log (stdout is reserved for the protocol).
+- [ ] 4.6 Declarative UI vocabulary — list, table, form field, text, progress bar, menu entry — rendered by vin, versioned with the protocol.
+- [ ] 4.7 Terminal takeover for plugins — expose the mechanism from 2.5.
+- [ ] 4.8 Plugin docs and typings — a `.d.ts` for the native plugin API (per Code Conventions) and a written spec of the JSON-RPC protocol.
+- [ ] 4.9 Reference plugins — `zip` as a native plugin (context-menu entries plus `vin zip.zip` / `vin zip.unzip`), and a small foreign plugin in another language (e.g. Python) to prove the protocol is language-agnostic.
+- [ ] 4.10 Trust model — a separate process isolates crashes, not permissions: a foreign plugin can still do anything the user can. Decide how plugins get trusted (explicit install/enable), and whether Node-based ones run under Node's permission model (`--permission`, `--allow-fs-read`, …).
+
+### 5. Network protocols
+
+- [ ] 5.1 Decide the Architecture TBD — protocol provider as its own concept or a kind of Handler; if the latter, protocols could ship as native plugins.
+- [ ] 5.2 Connections — saved in config (host, port, user, auth method); SSH agent or key files, with passphrase/password prompts at connect time — secrets never stored in plain config; SFTP host keys checked against `known_hosts` (ssh2 only verifies through a caller-supplied `hostVerifier`).
+- [ ] 5.3 SFTP provider (`ssh2-sftp-client`) — the full provider interface including streams; SFTP has no change notifications, so `watch` falls back to polling or manual refresh.
+- [ ] 5.4 FTP/FTPS provider (`basic-ftp`) — prefer FTPS (plain FTP sends credentials in cleartext); one operation at a time per connection, so queue operations or pool connections.
+- [ ] 5.5 Cross-provider copy/move — streamed between any two providers with progress and cancel; a move across providers is copy + delete; names invalid on the target OS (e.g. `:` or `?` from a Linux server to Windows) are reported or renamed.
+- [ ] 5.6 Remote open/edit — download to a temp file, open it, upload on save/exit (as mc and WinSCP do); temp files cleaned up.
+- [ ] 5.7 Resilience — timeouts, keep-alive, reconnect; slow listings show a loading state and can be cancelled, never blocking the UI.
+
+### 6. Command line (`:`)
+
+Design deferred (see Use Cases and Interactions).
+
+- [ ] 6.1 Design — syntax, completion, history, user-defined aliases/commands (vifm's `:command`), running shell commands on the selected files.
+- [ ] 6.2 Implement on the contribution registry (1.6).
+
+### 7. Later / maybe
+
+- [ ] 7.1 Undo for file operations (vifm has it).
+- [ ] 7.2 Directory bookmarks.
+- [ ] 7.3 Tabs.
+- [ ] 7.4 Directory sizes computed on demand.
+- [ ] 7.5 Permission/ownership editing (Unix) and attributes (Windows).
+- [ ] 7.6 Recursive find and content search — a good plugin candidate.
+- [ ] 7.7 Archives as a `FileSystemProvider` — browse a zip like a directory.
+- [ ] 7.8 Themes and color schemes (possibly honoring `LS_COLORS`).
+- [ ] 7.9 Image previews in terminals with a graphics protocol (Kitty, Sixel).
+- [ ] 7.10 Distribution as a single executable.
+- [ ] 7.11 Electron + React GUI — out of scope (Tech Stack 3); the architecture keeps it possible.
 
