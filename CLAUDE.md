@@ -180,7 +180,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [ ] 4.8 Plugin docs and typings — a `.d.ts` for the native plugin API (per Code Conventions) and a written spec of the JSON-RPC protocol.
 - [ ] 4.9 Reference plugins — `zip` as a native plugin (context-menu entries plus `vin zip.zip` / `vin zip.unzip`), and a small foreign plugin in another language (e.g. Python) to prove the protocol is language-agnostic.
 - [ ] 4.10 Trust model — a separate process isolates crashes, not permissions: a foreign plugin can still do anything the user can. Decide how plugins get trusted (explicit install/enable), and whether Node-based ones run under Node's permission model (`--permission`, `--allow-fs-read`, …).
-- [ ] 4.11 Name collisions — top-level handler names share one namespace (`Vin.register` rejects a duplicate), so a plugin named like a built-in or another plugin must fail with a readable message that names both sources, not crash startup; possibly an alias in config to rename one. *(proposed)*
+- [ ] 4.11 Name collisions — top-level handler names share one namespace (`Vin.register` rejects a duplicate), so a plugin named like a built-in or another plugin must fail with a readable message that names both sources, not crash startup; possibly an alias in config to rename one.
 
 ### 5. Network protocols
 
