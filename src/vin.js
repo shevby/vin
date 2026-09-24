@@ -1,6 +1,8 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { EventBus } = require('./events');
 const Handler = require('./handler');
+const { setHost } = require('./host');
 const { createInProcessTransport } = require('./transport');
 const { log } = require('./log');
 
@@ -12,6 +14,11 @@ class Vin {
      * @type {Map<string, Handler>}
      */
     this.handlers = new Map();
+    /**
+     * The event bus between handlers; see `Handler#emit` and `Handler#on`.
+     * @readonly
+     */
+    this.events = new EventBus();
   }
 
   /**
@@ -30,6 +37,7 @@ class Vin {
       throw new Error(`Handler "${handler.name}" is already registered`);
     }
     this.handlers.set(handler.name, handler);
+    setHost(handler, { events: this.events });
   }
 
   /**

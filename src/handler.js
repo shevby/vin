@@ -1,12 +1,12 @@
+const { getHost } = require('./host');
+const { isName } = require('./names');
 const { Model } = require('./state');
 
 /**
  * @typedef {import('./state').StateObject} StateObject
  * @typedef {import('./state').StateListener} StateListener
+ * @typedef {import('./events').EventListener} EventListener
  */
-
-/** A letter, then letters, digits, `-` or `_` — no dots, since dots separate path segments. */
-const NAME_PATTERN = /^[A-Za-z][\w-]*$/;
 
 /**
  * Base class for the handler behind one window. Handlers nest: each can hold named sub-handlers to any
@@ -22,6 +22,10 @@ const NAME_PATTERN = /^[A-Za-z][\w-]*$/;
  * State: `this.update(state)` replaces the window's whole state and registers its top-level properties;
  * `this.state.a.b = …` edits one property. Either way the UI's copy follows automatically.
  * Type a subclass's state with `@extends {Handler<{ cwd: string }>}`.
+ *
+ * Events: `this.emit('changed', payload)` publishes `<this path>.changed` to every handler listening with
+ * `this.on('main.left.changed', listener)`; listening stops when the listener's handler is disposed.
+ * Both need the handler's tree to be registered with `Vin`.
  * @template {StateObject} [S=StateObject]
  */
 class Handler {
@@ -34,13 +38,18 @@ class Handler {
   #initializing = null;
   /** @type {Promise<void> | null} */
   #disposing = null;
+  /**
+   * Event subscriptions made through `on()`, released on dispose.
+   * @type {Set<() => void>}
+   */
+  #subscriptions = new Set();
 
   /**
    * @param {string} name Unique among its siblings (or among `Vin`'s top-level handlers).
    * @throws {TypeError} If `name` isn't a letter followed by letters, digits, `-` or `_`.
    */
   constructor(name) {
-    if (typeof name !== 'string' || !NAME_PATTERN.test(name)) {
+    if (!isName(name)) {
       throw new TypeError(`Invalid handler name "${name}": use a letter, then letters, digits, "-" or "_"`);
     }
     /** @readonly */
@@ -95,6 +104,51 @@ class Handler {
    */
   subscribeState(listener) {
     return this.#model.subscribe(listener);
+  }
+
+  /**
+   * Emits an event named after this handler: `emit('changed')` on `main.left` publishes
+   * `main.left.changed`. Listeners get it a microtask later.
+   * @param {string} event A name (letters, digits, `-`, `_`; no dots).
+   * @param {unknown} [payload] JSON data; listeners get a frozen copy.
+   * @throws {Error} If `event` isn't a name, `payload` isn't JSON data, or this handler's tree isn't
+   *   registered with `Vin`.
+   */
+  emit(event, payload = null) {
+    if (!isName(event)) {
+      throw new TypeError(`Invalid event name "${event}": use a letter, then letters, digits, "-" or "_"`);
+    }
+    this.#events('emit').emit(`${this.path}.${event}`, payload, this.path);
+  }
+
+  /**
+   * Listens for an event by its full name, until this handler is disposed.
+   * @param {string} name `<handler path>.<event>`, e.g. `main.left.changed`.
+   * @param {EventListener} listener Called with the payload and `{ name, source }`.
+   * @returns {() => void} Stops listening earlier.
+   * @throws {Error} If `name` isn't valid, this handler is disposed, or its tree isn't registered with `Vin`.
+   */
+  on(name, listener) {
+    if (this.#disposing) {
+      throw new Error(`Disposed handler "${this.path}" can't listen for "${name}"`);
+    }
+    const off = this.#events('listen for').on(name, listener);
+    this.#subscriptions.add(off);
+    return () => {
+      off();
+      this.#subscriptions.delete(off);
+    };
+  }
+
+  /**
+   * @param {string} action For the error message.
+   */
+  #events(action) {
+    const host = getHost(this);
+    if (!host) {
+      throw new Error(`Handler "${this.path}" can't ${action} events: its top-level handler isn't registered with Vin`);
+    }
+    return host.events;
   }
 
   /**
@@ -260,6 +314,10 @@ class Handler {
         .then(() => this.onDispose())
         .catch((error) => errors.push(error));
     }
+    for (const off of this.#subscriptions) {
+      off();
+    }
+    this.#subscriptions.clear();
     this.#model.flush();
     this.#model.clear();
     if (errors.length === 1) {
