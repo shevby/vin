@@ -10,9 +10,9 @@
  */
 
 /**
- * `other` is anything else a file system holds (a socket, a device, a FIFO); `unknown` is a symlink whose
- * target is missing or unreadable.
- * @typedef {'file' | 'directory' | 'other' | 'unknown'} FileType
+ * `device` is a block or character device; `other` is anything else, where a protocol can't say more;
+ * `unknown` is a symlink whose target is missing or unreadable.
+ * @typedef {'file' | 'directory' | 'fifo' | 'socket' | 'device' | 'other' | 'unknown'} FileType
  */
 
 /**
@@ -24,6 +24,8 @@
  * @property {number} mtime Last modified, in ms since the epoch.
  * @property {number} ctime Last status change, in ms since the epoch.
  * @property {number} [mode] Unix permission bits and file type, where the protocol has them.
+ * @property {boolean} executable Whether it's a program or script to run: on Unix, a file with an execute
+ *   bit; on Windows, one named `.exe`, `.com`, `.bat`, `.cmd`, or `.ps1`.
  */
 
 /**
@@ -89,6 +91,17 @@ function fsError(code, reason, where = {}) {
   const quoted = [where.path, where.dest].filter((item) => item !== undefined).map((item) => `'${item}'`);
   const message = `${code}: ${reason}${quoted.length ? `, ${quoted.join(' -> ')}` : ''}`;
   return Object.assign(new Error(message), { code, reason }, where);
+}
+
+/**
+ * The URI of a directory's entry, whatever the scheme: `childUri('file:///C:/a', 'b c')` is
+ * `file:///C:/a/b%20c`.
+ * @param {string} uri The directory's.
+ * @param {string} name One name, e.g. one `readDirectory` listed.
+ * @returns {string}
+ */
+function childUri(uri, name) {
+  return `${uri.endsWith('/') ? uri : `${uri}/`}${encodeURIComponent(name)}`;
 }
 
 /** A URI's scheme: a letter, then letters, digits, `+`, `-` or `.` (RFC 3986). */
@@ -221,4 +234,4 @@ class FileSystem {
   }
 }
 
-module.exports = { FileSystem, fsError };
+module.exports = { FileSystem, childUri, fsError };

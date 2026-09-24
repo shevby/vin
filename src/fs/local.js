@@ -17,8 +17,26 @@ const { fsError } = require('./file-system');
  * @returns {FileType}
  */
 function typeOf(entry) {
-  return entry.isFile() ? 'file' : entry.isDirectory() ? 'directory' : 'other';
+  if (entry.isFile()) {
+    return 'file';
+  }
+  if (entry.isDirectory()) {
+    return 'directory';
+  }
+  if (entry.isFIFO()) {
+    return 'fifo';
+  }
+  if (entry.isSocket()) {
+    return 'socket';
+  }
+  return entry.isBlockDevice() || entry.isCharacterDevice() ? 'device' : 'other';
 }
+
+/**
+ * Extensions of the files vin calls executable on Windows: programs and shell scripts. Not `PATHEXT`, which
+ * also has the Windows Script Host's (`.js`, `.vbs`, …) and would mark every `.js` file in a project.
+ */
+const WINDOWS_EXECUTABLES = new Set(['.exe', '.com', '.bat', '.cmd', '.ps1']);
 
 /**
  * @param {string} path
@@ -41,27 +59,42 @@ async function lstatOrNull(path) {
  * @implements {FileSystemProvider}
  */
 class LocalProvider {
+  /** Whether executables are told by extension, as on Windows, rather than by execute bits. */
+  #byExtension;
+
+  /**
+   * @param {object} [options] For tests.
+   * @param {NodeJS.Platform} [options.platform] Default: this one.
+   */
+  constructor({ platform = process.platform } = {}) {
+    this.#byExtension = platform === 'win32';
+  }
+
   /** @type {FileSystemProvider['stat']} */
   async stat(uri) {
     const path = paths.fromUri(uri);
     const entry = await fs.promises.lstat(path);
     if (!entry.isSymbolicLink()) {
-      return this.#stat(entry, false);
+      return this.#stat(path, entry, false);
     }
     try {
-      return this.#stat(await fs.promises.stat(path), true);
+      return this.#stat(path, await fs.promises.stat(path), true);
     } catch {
-      return { ...this.#stat(entry, true), type: 'unknown' };
+      return { ...this.#stat(path, entry, true), type: 'unknown', executable: false };
     }
   }
 
   /**
+   * @param {string} path
    * @param {fs.Stats} stats
    * @param {boolean} symlink
    * @returns {FileStat}
    */
-  #stat(stats, symlink) {
-    return { type: typeOf(stats), symlink, size: stats.size, mtime: stats.mtimeMs, ctime: stats.ctimeMs, mode: stats.mode };
+  #stat(path, stats, symlink) {
+    const type = typeOf(stats);
+    const executable = type === 'file'
+      && (this.#byExtension ? WINDOWS_EXECUTABLES.has(nodePath.extname(path).toLowerCase()) : (stats.mode & 0o111) !== 0);
+    return { type, symlink, size: stats.size, mtime: stats.mtimeMs, ctime: stats.ctimeMs, mode: stats.mode, executable };
   }
 
   /** @type {FileSystemProvider['readDirectory']} */

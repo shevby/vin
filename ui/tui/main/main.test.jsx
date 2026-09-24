@@ -20,9 +20,13 @@ const home = (...names) => paths.toUri(nodePath.join(paths.home, ...names));
  */
 async function setup(t, panes) {
   const vin = new Vin();
-  vin.register(new Main(panes));
+  const main = new Main(panes);
+  vin.register(main);
   await vin.init();
   await vin.openWindow('main');
+  // The directories don't exist: drop the errors, so the first key isn't taken to dismiss them.
+  await Promise.all([main.left.loaded, main.right.loaded]);
+  vin.messages.clear();
   connect(createInProcessTransport(vin));
   t.after(disconnect);
   const app = render(<App />);
