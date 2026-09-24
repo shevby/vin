@@ -106,6 +106,7 @@ test('call refuses anything but public subclass methods', async () => {
   const refused = [
     '_helper', 'cwd', 'name', 'events', 'constructor', 'toString', 'hasOwnProperty',
     'init', 'dispose', 'add', 'remove', 'resolve', 'call', 'onInit', 'onDispose', 'missing',
+    'state', 'update', 'subscribeState',
   ];
   for (const method of refused) {
     await assert.rejects(main.call(`left.${method}`), /no callable method/, method);
@@ -201,4 +202,33 @@ test('remove detaches and disposes a sub-handler', async () => {
   assert.equal(main.children.has('left'), false);
   assert.deepEqual(events, ['init main', 'init main.left', 'dispose main.left']);
   await assert.rejects(main.remove('left'), /no sub-handler named "left"/);
+});
+
+test('state: update registers, this.state edits, subscribers follow until dispose', async () => {
+  /** @extends {Handler<{ cwd: string }>} */
+  class Pane extends Handler {
+    /** @param {string} dir */
+    navigate(dir) {
+      this.state.cwd = dir;
+    }
+  }
+  const pane = new Pane('pane');
+  pane.update({ cwd: '/' });
+  /** @type {import('./state').StateMessage[]} */
+  const messages = [];
+  pane.subscribeState((message) => messages.push(message));
+
+  await pane.call('navigate', '/tmp');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(messages, [
+    { type: 'replace', state: { cwd: '/' } },
+    { type: 'patch', patches: [{ op: 'set', path: ['cwd'], value: '/tmp' }] },
+  ]);
+
+  pane.state.cwd = '/last';
+  await pane.dispose();
+  assert.equal(messages.length, 3, 'edits pending at dispose are still delivered');
+  pane.state.cwd = '/after';
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(messages.length, 3, 'nothing is sent after dispose');
 });
