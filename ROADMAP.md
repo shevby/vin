@@ -52,6 +52,7 @@ Section names in parentheses (Tech Stack 2, Architecture, Glossary, …) refer t
 - [ ] 2.17 Session state — restore each pane's directory and view options on start; a `--choose-dir`-style option (vifm has one) so a shell function can `cd` to vin's last directory on exit.
 - [ ] 2.18 Startup paths — `vin [left-path] [right-path]` opens the panes there, as vifm does.
 - [ ] 2.20 Quitting — a `core.quit` command, bound to vifm's `ZZ` (and `:q` once 6 lands), that exits through keybindings like everything else; today only Ctrl+C quits, handled by Ink before keybindings see it. *(proposed)*
+- [ ] 2.21 Color scheme — set in `config.json5`: a `colors` section, validated like any option, giving each element `fg`, `bg`, `bold`, `inverse`, … with colors as 256-color numbers, `#hex`, or names (Ink takes all three; chalk downsamples them for terminals with fewer colors). The default is vifm's [papercolor-dark](https://github.com/vifm/vifm-colors/blob/master/papercolor-dark.vifm), its groups mapped to vin's elements: `Win`/`OtherWin`/`Border` (252 on 234) for panes and dialogs, `TopLine`/`TopLineSel` for pane titles, `CurrLine`/`OtherLine` for the cursor in the active and the other pane, `Selected` (2.6), the file types for 2.2 (`Directory`, `Link`, `BrokenLink`, `Executable`, `Socket`, `Device`, `Fifo`), `ErrorMsg` for messages (1.12), `StatusLine` (2.14), `JobLine` (2.10), `AuxWin` (2.13), `CmdLine`/`WildMenu` (6). Its background (234) fills the whole screen, overlays included, instead of the terminal's own.
 
 ## 3. Context menu and CLI
 
@@ -100,7 +101,7 @@ Design deferred (see Use Cases and Interactions).
 - [ ] 7.5 Permission/ownership editing (Unix) and attributes (Windows).
 - [ ] 7.6 Recursive find and content search — a good plugin candidate.
 - [ ] 7.7 Archives as a `FileSystemProvider` — browse a zip like a directory.
-- [ ] 7.8 Themes and color schemes (possibly honoring `LS_COLORS`).
+- [ ] 7.8 More color schemes to switch between (e.g. ported from [vifm-colors](https://github.com/vifm/vifm-colors)), and honoring `LS_COLORS` for file types; the scheme itself is 2.21.
 - [ ] 7.9 Image previews in terminals with a graphics protocol (Kitty, Sixel).
 - [ ] 7.10 Distribution as a single executable — and then where `config.json5` and `plugins/` live, since they sit in the project root until then.
 - [ ] 7.11 Electron + React GUI — out of scope (Tech Stack 3); the architecture keeps it possible.
