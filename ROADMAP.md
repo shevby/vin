@@ -39,7 +39,7 @@ Section names in parentheses (Tech Stack 2, Architecture, Glossary, …) refer t
 - [ ] 2.4 Windows drives — the parent of `C:\` is a list of drives (Node has no API for this; probe drive letters or ask the OS).
 - [ ] 2.5 Opening files — with the OS default app (`start`/`open`/`xdg-open`), or in `$EDITOR`/`$PAGER` through a terminal takeover (suspend Ink, hand over the tty, restore on exit) — the same mechanism later offered to plugins (4.7); "open with" associations in config.
 - [ ] 2.6 Selection — toggle, all/none/invert, range; operations act on the selection, or on the entry under the cursor when nothing is selected.
-- [ ] 2.7 File operations — copy/move (to the other pane, and via yank/paste), rename, delete, create file/directory, create symlink (on Windows this needs Developer Mode or admin rights).
+- [ ] 2.7 File operations — copy/move (to the other pane, and via yank/paste), rename, delete, create file/directory, create symlink (on Windows this needs Developer Mode or admin rights). Copy, cut, and paste on `ctrl+c`/`ctrl+x`/`ctrl+v`, as in desktop file managers, and on macOS `cmd+c`/`cmd+x`/`cmd+v` too (only where the terminal passes Cmd on; see CONTROLS.md). Windows Terminal keeps `ctrl+v` for its own paste and sends the clipboard's text instead, so a pane must also take pasted text — the native paths vin put on the clipboard (Tech Stack 5) — as a paste.
 - [ ] 2.8 Bulk rename — edit the list of selected names in `$EDITOR`, as vifm does.
 - [ ] 2.9 Safe delete — to the OS trash by default; permanent delete behind a confirmation.
 - [ ] 2.10 Long operations — background jobs with progress and cancel, so the UI stays responsive; conflict prompts (overwrite / skip / rename / apply to all).
@@ -51,7 +51,7 @@ Section names in parentheses (Tech Stack 2, Architecture, Glossary, …) refer t
 - [ ] 2.16 Help window — generated from the contribution registry, so plugin keys and commands appear automatically.
 - [ ] 2.17 Session state — restore each pane's directory and view options on start, from a file in `.vin/`; a `--choose-dir`-style option (vifm has one) so a shell function can `cd` to vin's last directory on exit.
 - [ ] 2.18 Startup paths — `vin [left-path] [right-path]` opens the panes there, as vifm does.
-- [ ] 2.20 Quitting — a `core.quit` command, bound to vifm's `ZZ` (and `:q` once 6 lands), that exits through keybindings like everything else; today only Ctrl+C quits, handled by Ink before keybindings see it. *(proposed)*
+- [x] 2.20 Quitting — `core.quit` asks the UI to exit (`core`'s `quitting` state), bound to `z z` until the command line brings `:q` (6.2), when that binding goes. Ctrl+C no longer quits (Ink's `exitOnCtrlC` is off): it's copy (2.7). Key notation gained `cmd` for macOS, reported through the kitty keyboard protocol, which the TUI turns on where the terminal has it.
 - [x] 2.21 Color scheme — set in `config.json5`: a `colors` section of groups by kind (`pane: { titleActive: { … } }`), validated like any option, giving each element `fg`, `bg`, `bold`, `italic`, `underline`, `inverse`, with colors as 256-color numbers, `#hex`, names, or `default` (Ink takes all of them; chalk downsamples them for terminals with fewer colors). The default is vifm's [papercolor-dark](https://github.com/vifm/vifm-colors/blob/master/papercolor-dark.vifm); its background (234) fills the whole screen, overlays included, instead of the terminal's own. Done: `Win`/`Border`/`CmdLine`/`ErrorMsg`/`CurrLine`/`LineNr` as `core`'s shared groups, `TopLine`/`TopLineSel` as the pane titles. Groups for elements not built yet are declared by the items that add them: `CurrLine`/`OtherLine` for the cursor in the active and the other pane, `Selected` (2.6), the file types for 2.2 (`Directory`, `Link`, `BrokenLink`, `Executable`, `Socket`, `Device`, `Fifo`), `StatusLine` (2.14), `JobLine` (2.10), `AuxWin` (2.13), `CmdLine`/`WildMenu` (6).
 - [ ] 2.22 Sessions — named snapshots of runtime state (not configuration, which stays in `config.json5`): each pane's directory and view options, directory history (2.3), bookmarks (7.2), macros, command and search history (6, 2.12), each feature adding its part as it lands. A `session` handler with `session.save [name]`, `session.load`, `session.delete`, and a list to pick from (1.14); as `<kind>.<method>` commands they work the same from keys, `:session.save` (6), and the CLI (3.2). As in [vifm's sessions](https://vifm.info/vimdoc.shtml#vifm-sessions): one JSON5 file per session in a flat `.vin/sessions/` folder in the project root (`.vin/` holds everything vin writes as it runs, git-ignored) (so names must be valid file names); the current session is saved on exit and before switching to another, and can be left without saving; its data overrides the unnamed state 2.17 restores.
 
@@ -91,7 +91,7 @@ Section names in parentheses (Tech Stack 2, Architecture, Glossary, …) refer t
 Design deferred (see Use Cases and Interactions).
 
 - [ ] 6.1 Design — syntax, completion, history, user-defined aliases/commands (vifm's `:command`), running shell commands on the selected files.
-- [ ] 6.2 Implement on the contribution registry (1.6).
+- [ ] 6.2 Implement on the contribution registry (1.6). `:q` quits (`core.quit`), replacing the temporary `z z` binding (2.20).
 
 ## 7. Later / maybe
 

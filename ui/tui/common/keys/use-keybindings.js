@@ -38,7 +38,7 @@ export function useKeybindings({ isActive = true } = {}) {
       const chord = toChord(input, key);
       if (chord) {
         send(`Key "${chord}"`, () => init('core').press(chord));
-      } else if (input && !key.ctrl && !key.meta) {
+      } else if (input && !key.ctrl && !key.meta && !key.super) {
         // Several characters at once: a paste the terminal didn't bracket, or keys typed faster than read.
         send('Typing', () => init('core').type(input));
       }

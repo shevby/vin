@@ -25,6 +25,8 @@ test('toChord turns Ink input into canonical chords', () => {
     ['w', { ctrl: true }, 'ctrl+w'],
     ['x', { meta: true }, 'alt+x'],
     ['X', { meta: true, shift: true }, 'alt+shift+x'],
+    ['c', { super: true }, 'cmd+c'],
+    ['c', { ctrl: true, super: true }, 'ctrl+cmd+c'],
     ['', { tab: true, shift: true }, 'shift+tab'],
     ['', { return: true }, 'enter'],
     ['', { escape: true, meta: true }, 'escape'],

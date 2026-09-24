@@ -1,20 +1,31 @@
-import { Box, Text, useWindowSize } from 'ink';
+import { useEffect } from 'react';
+import { Box, Text, useApp, useWindowSize } from 'ink';
 import { useKeybindings } from './common/keys/index.js';
 import { MessageLine, MessagePopup } from './common/messages/index.js';
+import { useSelector } from './common/store/index.js';
 import { Theme, useBackground, useBorder, useStyle } from './common/theme/index.js';
 import { Windows } from './common/windows/index.js';
+import { init } from './handler.js';
 import { windows } from './windows.js';
 
 /**
  * Root TUI component: the open windows over the whole terminal, with the message line below them and the
  * message popup over everything, all in the color scheme (`core.window`'s background fills the screen).
- * It reaches the backend only through handles from `./handler.js`.
+ * It exits once the backend asks to (`core`'s `quitting`). It reaches the backend only through handles
+ * from `./handler.js`.
  * @param {object} props
  * @param {{ [kind: string]: import('./common/windows/windows.jsx').WindowComponent }} [props.components] The
  *   component for each kind of window; default `./windows.js`.
  */
 export function App({ components = windows }) {
   useKeybindings();
+  const { exit } = useApp();
+  const quitting = useSelector(init('core').store, (state) => state.quitting === true);
+  useEffect(() => {
+    if (quitting) {
+      exit();
+    }
+  }, [quitting, exit]);
   return (
     <Theme>
       <Screen components={components} />
@@ -39,7 +50,7 @@ function Screen({ components }) {
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         <Windows components={components}>
           <Box borderStyle="round" {...border} paddingX={1}>
-            <Text {...text}>vin — press Ctrl+C to quit</Text>
+            <Text {...text}>vin — press z z to quit</Text>
           </Box>
         </Windows>
       </Box>

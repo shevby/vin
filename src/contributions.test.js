@@ -98,7 +98,7 @@ test('the core handler mirrors the registry and runs commands for the UI', async
     assert.equal(message.type, 'replace');
     state = message.state;
   });
-  assert.deepEqual(state.contributions.commands.map((/** @type {any} */ c) => c.id), ['core.closeWindow', 'main.swap', 'pane.down', 'pane.info']);
+  assert.deepEqual(state.contributions.commands.map((/** @type {any} */ c) => c.id), ['core.closeWindow', 'core.quit', 'main.swap', 'pane.down', 'pane.info']);
   await vin.openWindow('main');
   vin.resolve('main.left').focus();
   assert.equal(await transport.call('core.execute', ['pane.down']), 'main.left down', 'on the focus');

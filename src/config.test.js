@@ -139,9 +139,9 @@ test('a syntax error stops at once, and the root must be an object', async () =>
 test("user keybindings apply after the built-in ones, and replace the last file's", async () => {
   const { vin } = await load(`{ keybindings: [{ key: 'q', command: 'core.closeWindow' }, { key: 'escape', command: '-core.closeWindow' }] }`);
   const bindings = () => vin.registry.get('keybindings').map((b) => `${b.key} ${b.command}`);
-  assert.deepEqual(bindings(), ['q core.closeWindow']);
+  assert.deepEqual(bindings(), ['z z core.quit', 'q core.closeWindow']);
   vin.config.parse('{}');
-  assert.deepEqual(bindings(), ['escape core.closeWindow']);
+  assert.deepEqual(bindings(), ['escape core.closeWindow', 'z z core.quit']);
 });
 
 test('the key timeout option reaches the key sequencer', async (t) => {
