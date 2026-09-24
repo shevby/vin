@@ -76,6 +76,39 @@ export function useStyle(id) {
 }
 
 /**
+ * Color groups merged, later ones over earlier, as props for a line whose background reaches past its
+ * text — set `backgroundColor` on the line's `<Box>`, the rest on its `<Text>`s. `inverse` is resolved into
+ * swapped colors (the window's where a group sets none), since it would swap them only under the text.
+ * @param {(Style | undefined)[]} styles
+ * @param {Style | undefined} window
+ * @returns {TextStyle} Without `inverse`.
+ */
+export function lineStyle(styles, window) {
+  /** @type {Style} */
+  const style = Object.assign({}, ...styles);
+  const { inverse, ...rest } = style;
+  if (!inverse) {
+    return textStyle(rest, window);
+  }
+  const bg = style.fg ?? window?.fg;
+  const fg = style.bg ?? window?.bg;
+  return textStyle({ ...rest, fg, bg }, undefined);
+}
+
+/**
+ * `lineStyle()` for color groups: `useLineStyle(['pane.directory', 'pane.cursorActive'])`.
+ * @param {(string | null)[]} ids Groups to merge, later over earlier; `null`s are skipped.
+ * @returns {TextStyle}
+ */
+export function useLineStyle(ids) {
+  const colors = useContext(ThemeContext);
+  const styles = ids.map((id) => (id === null ? undefined : colors[id]));
+  const window = colors['core.window'];
+  // The styles themselves are the dependencies: a list of the same length at every call site.
+  return useMemo(() => lineStyle(styles, window), [...styles, window]);
+}
+
+/**
  * The scheme's background for windows (`core.window`), or `undefined` for the terminal's own.
  * @returns {string | undefined}
  */

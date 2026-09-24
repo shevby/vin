@@ -3,17 +3,30 @@ import { paths } from '../../../../src/paths.js';
 import { init } from '../../handler.js';
 import { useSelector } from '../../common/store/index.js';
 import { useBorder, useStyle } from '../../common/theme/index.js';
+import { Listing } from './listing.jsx';
+
+/**
+ * @typedef {import('../../../../src/handlers/main/pane/pane.js').Entry} Entry
+ * @typedef {import('../../../../src/handlers/main/pane/pane.js').Status} Status
+ */
+
+/** @type {Entry[]} */
+const NO_ENTRIES = [];
 
 /**
  * One pane of the main window (`src/handlers/main/pane/`): a box with the directory it shows set into its
  * top border — cut from the start when it doesn't fit, so the end of the path stays — in `pane.titleActive`
- * for the active pane and `pane.title` for the other. Its listing comes with 2.2.
+ * for the active pane and `pane.title` for the other — and its listing inside.
  * @param {object} props
  * @param {string} props.path The pane's handler, e.g. `main.left`.
  * @param {boolean} props.active
  */
 export function Pane({ path, active }) {
-  const uri = useSelector(init(path).store, (state) => /** @type {string | null} */ (state.uri ?? null));
+  const { store } = init(path);
+  const uri = useSelector(store, (state) => /** @type {string | null} */ (state.uri ?? null));
+  const status = useSelector(store, (state) => /** @type {Status} */ (state.status ?? 'loading'));
+  const entries = useSelector(store, (state) => /** @type {Entry[]} */ (/** @type {unknown} */ (state.entries ?? NO_ENTRIES)));
+  const cursor = useSelector(store, (state) => /** @type {number} */ (state.cursor ?? 0));
   const border = useBorder();
   const title = useStyle(active ? 'pane.titleActive' : 'pane.title');
   return (
@@ -30,6 +43,7 @@ export function Pane({ path, active }) {
           <Text {...title}> </Text>
         </Box>
       )}
+      <Listing entries={entries} cursor={cursor} status={status} active={active} />
     </Box>
   );
 }

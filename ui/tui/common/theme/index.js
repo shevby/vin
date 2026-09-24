@@ -1,1 +1,1 @@
-export { Theme, inkColor, textStyle, useStyle, useBackground, useBorder } from './theme.jsx';
+export { Theme, inkColor, textStyle, lineStyle, useStyle, useLineStyle, useBackground, useBorder } from './theme.jsx';

@@ -39,8 +39,8 @@ async function open(config) {
 test('the main window opens with two panes, the left one active and focused', async () => {
   const { main, focus } = await open();
   assert.deepEqual(main.state, { active: 'left', singlePane: false });
-  assert.deepEqual(main.left.state, { uri: 'file:///a' });
-  assert.deepEqual(main.right.state, { uri: 'file:///b' });
+  assert.equal(main.left.state.uri, 'file:///a');
+  assert.equal(main.right.state.uri, 'file:///b');
   assert.equal(focus(), 'main.left');
 });
 

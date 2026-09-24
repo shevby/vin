@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { FileSystem } = require('./file-system');
+const { FileSystem, childUri } = require('./file-system');
 const Vin = require('../vin');
 const Handler = require('../handler');
 const { paths } = require('../paths');
@@ -93,4 +93,17 @@ test('handlers reach the local disk as this.fs', async (t) => {
   await vin.init();
   assert.deepEqual(await vin.call('lister.list'), ['hello.txt']);
   assert.throws(() => new Lister('orphan').fs, /can't access files: its top-level handler isn't registered/);
+});
+
+test('childUri names an entry of a directory, whatever the scheme', () => {
+  assert.equal(childUri('sftp://host/home/me', 'a b'), 'sftp://host/home/me/a%20b');
+  assert.equal(childUri('file:///', 'x'), 'file:///x');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vin-uri-'));
+  try {
+    for (const name of ['a b', '100%', 'x#y', 'ж.txt', "it's", 'a;b=c']) {
+      assert.equal(paths.fromUri(childUri(paths.toUri(dir), name)), path.join(dir, name), name);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -8,7 +8,7 @@ import { createInProcessTransport } from '../../../../src/transport.js';
 import { App } from '../../app.jsx';
 import { connect, disconnect } from '../../handler.js';
 import { settle } from '../../../../test/ui.jsx';
-import { inkColor, textStyle } from './index.js';
+import { inkColor, lineStyle, textStyle } from './index.js';
 
 test('colors become what Ink takes; text without a color of its own takes the window\'s', () => {
   assert.equal(inkColor(149), 'ansi256(149)');
@@ -19,6 +19,18 @@ test('colors become what Ink takes; text without a color of its own takes the wi
   assert.deepEqual(textStyle({ bold: true, inverse: true }, window), { color: 'ansi256(252)', bold: true, inverse: true });
   assert.deepEqual(textStyle({ fg: 234, bg: 149 }, window), { color: 'ansi256(234)', backgroundColor: 'ansi256(149)' });
   assert.deepEqual(textStyle(undefined, undefined), {}, 'no scheme: the terminal\'s colors');
+});
+
+test('a line\'s style merges groups and resolves inverse into swapped colors', () => {
+  const window = { fg: 252, bg: 234 };
+  const directory = { fg: 74, bold: true };
+  assert.deepEqual(lineStyle([directory, { bold: true, inverse: true }], window),
+    { color: 'ansi256(234)', backgroundColor: 'ansi256(74)', bold: true });
+  assert.deepEqual(lineStyle([undefined, { bold: true, inverse: true }], window),
+    { color: 'ansi256(234)', backgroundColor: 'ansi256(252)', bold: true }, 'the window\'s colors, swapped');
+  assert.deepEqual(lineStyle([directory, { bold: true, bg: 235 }], window),
+    { color: 'ansi256(74)', backgroundColor: 'ansi256(235)', bold: true });
+  assert.deepEqual(lineStyle([undefined, undefined], window), { color: 'ansi256(252)' });
 });
 
 test('the TUI draws in the scheme, with the user\'s changes', async (t) => {
