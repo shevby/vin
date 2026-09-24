@@ -82,7 +82,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
     - User remapping: user config contributes with `{ user: true }` — applied after every other source, and allowed to remove bindings (`{ key?, command: '-pane.down' }`); they come from the config file's `keybindings`.
   - Windows (`src/windows.js`) — the backend owns the stack and the focus, mirrored in `core`'s `windows` state (bottom to top: `id`, `path`, `kind`, `focus`). `await vin.openWindow('main')` opens a lasting window, there until its handler is disposed; `await this.openWindow(new Confirm(…))` adds a transient one to the opener as a sub-handler, on top with the focus, and resolves with its result — `this.close(result)` inside it, or `null` for Escape (`core.closeWindow`) or disposal. Closing disposes it and the windows it opened. `this.focus()` takes the focus within a handler's window; each window keeps its own for when it's uncovered.
     - The UI draws the bottom window full-size and the rest as centered overlays (`ui/tui/common/windows/`), each by the component for its kind (`ui/tui/windows.js`), and releases a closed window's stores (`release(path)` in `ui/tui/handler.js`).
-  - Configuration (`src/config.js`) — `config.json5` in the application folder (git-ignored; the user keeps vin's files with the app, not in per-OS config directories), created on first start listing every declared option, commented out. Options are contributions (`configuration`: `{ key, type, default, description?, enum?, minimum?, maximum? }`) set in the file under their kind (`pane: { showHidden: true }`); any handler reads any option with `this.config.get('pane.showHidden')`. `start()` parses the file before `init()` (invalid values read as their defaults meanwhile) and checks it after; any mistake — syntax, unknown section/option/command, wrong type — stops vin before the UI with every problem as `file:line:col`.
+  - Configuration (`src/config.js`) — `config.json5` in the project root (git-ignored; vin's files stay in the project — config next to `plugins/`, not in per-OS config directories), created on first start listing every declared option, commented out. Options are contributions (`configuration`: `{ key, type, default, description?, enum?, minimum?, maximum? }`) set in the file under their kind (`pane: { showHidden: true }`); any handler reads any option with `this.config.get('pane.showHidden')`. `start()` parses the file before `init()` (invalid values read as their defaults meanwhile) and checks it after; any mistake — syntax, unknown section/option/command, wrong type — stops vin before the UI with every problem as `file:line:col`.
     - Options are known once a handler of their kind is initialized, so a kind created later (a dialog) can't declare options yet — its section would be reported as unknown.
   - Main entry points:
     - `src/vin.js` — the `Vin` class: standalone, manages handlers and the event system, and starts the UI, connecting it to them.
@@ -158,7 +158,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.6 Contribution registry — the one extension-point mechanism for commands (with `tui`/`cli` surface flags), context-menu entries, and keybindings.
 - [x] 1.7 Keybindings — keys map to registered commands; multi-key sequences; scoped per window/mode; user remapping in config.
 - [x] 1.8 TUI window manager — overlays (see Glossary) stacked over the main view, with focus and key input routed to the topmost one.
-- [x] 1.9 Configuration — `config.json5` in the application folder, user values merged over defaults declared in code, validated with readable errors.
+- [x] 1.9 Configuration — `config.json5` in the project root, user values merged over defaults declared in code, validated with readable errors.
 - [ ] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays the native form.
 - [ ] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
 - [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
@@ -194,7 +194,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 
 ### 4. Plugins
 
-- [ ] 4.1 Discovery — built-in `plugins/` plus a user plugin directory under the config directory; enable/disable in config.
+- [ ] 4.1 Discovery — every plugin lives in `plugins/` in the project root; enable/disable in config.
 - [ ] 4.2 Manifest schema (`plugin.json5`) — name, version, `native`/`foreign`, entry or spawn command (with per-OS overrides, e.g. `python` vs `python3`), protocol version, declared contributions (commands with surfaces, menu entries, keybindings, config options); validated with readable errors.
 - [ ] 4.3 Lazy activation — contributions are read from the manifest, so menus, keybindings, and `vin --help` work without loading or spawning the plugin; it's activated on first use (like VS Code's activation events).
 - [ ] 4.4 Native plugins — `require`d and registered as Handlers; a plugin that throws is disabled with a message instead of taking vin down.
@@ -234,6 +234,6 @@ Design deferred (see Use Cases and Interactions).
 - [ ] 7.7 Archives as a `FileSystemProvider` — browse a zip like a directory.
 - [ ] 7.8 Themes and color schemes (possibly honoring `LS_COLORS`).
 - [ ] 7.9 Image previews in terminals with a graphics protocol (Kitty, Sixel).
-- [ ] 7.10 Distribution as a single executable.
+- [ ] 7.10 Distribution as a single executable — and then where `config.json5` and `plugins/` live, since they sit in the project root until then.
 - [ ] 7.11 Electron + React GUI — out of scope (Tech Stack 3); the architecture keeps it possible.
 

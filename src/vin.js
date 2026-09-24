@@ -22,7 +22,7 @@ class Vin {
   /**
    * @param {object} [options]
    * @param {string} [options.configFile] The user's config file, read by `start()`. Default: `config.json5`
-   *   next to the application.
+   *   in the project root.
    */
   constructor({ configFile = CONFIG_FILE } = {}) {
     /** @readonly */

@@ -19,7 +19,7 @@ const { deepFreeze } = require('./state');
  *   Objects and arrays are frozen. Throws if no handler or plugin declares the option.
  */
 
-/** Where vin keeps the user's configuration: next to the application, git-ignored. */
+/** Where vin keeps the user's configuration: the project root, git-ignored. */
 const CONFIG_FILE = path.join(__dirname, '..', 'config.json5');
 
 /** The top-level key that holds keybindings rather than a section of options. */
@@ -93,7 +93,7 @@ class Config {
 
   /**
    * Reads and parses a config file, replacing what was loaded before, and registers its keybindings.
-   * @param {string} [file] Default: `config.json5` next to the application.
+   * @param {string} [file] Default: `config.json5` in the project root.
    * @returns {boolean} Whether the file exists; if not, nothing is set and every option has its default.
    * @throws {ConfigError} If it can't be read or parsed at all. Other problems wait for `check()`.
    */
