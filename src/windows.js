@@ -60,6 +60,12 @@ class WindowStack {
   /** @type {Set<() => void>} */
   #listeners = new Set();
   #lastId = 0;
+  /**
+   * Windows `openTransient()` is initializing, with the focus they'll open with — set by `focus()` from
+   * their `onInit()` (a prompt focusing its text field).
+   * @type {Map<Handler, Handler>}
+   */
+  #opening = new Map();
   /** @type {import('./messages').ErrorReporter} */
   #report;
 
@@ -111,7 +117,8 @@ class WindowStack {
   }
 
   /**
-   * Adds `window` to `opener` as a sub-handler, initializes it, and opens it on top, focused.
+   * Adds `window` to `opener` as a sub-handler, initializes it, and opens it on top, focused — on `window`
+   * itself, or on the sub-handler it focused while initializing.
    * @param {Handler} opener
    * @param {Handler} window
    * @returns {Promise<Data>} What the window is closed with: `close(result)`'s result, or `null` if it's
@@ -120,11 +127,16 @@ class WindowStack {
    */
   async openTransient(opener, window) {
     opener.add(window);
+    this.#opening.set(window, window);
+    let focus = window;
     try {
       await window.init();
       if (window.parent !== opener) {
         throw new Error(`Window "${window.name}" was removed from "${opener.path}" while it opened`);
       }
+      const chosen = /** @type {Handler} */ (this.#opening.get(window));
+      // Unless what it focused was removed again meanwhile.
+      focus = isWithin(chosen, window) ? chosen : window;
     } catch (error) {
       if (window.parent === opener) {
         await opener.remove(window.name).catch((disposeError) => {
@@ -132,9 +144,11 @@ class WindowStack {
         });
       }
       throw error;
+    } finally {
+      this.#opening.delete(window);
     }
     return new Promise((resolve) => {
-      this.#entries.push({ id: ++this.#lastId, handler: window, focus: window, transient: true, resolve });
+      this.#entries.push({ id: ++this.#lastId, handler: window, focus, transient: true, resolve });
       this.#notify();
     });
   }
@@ -179,19 +193,27 @@ class WindowStack {
   }
 
   /**
-   * Focuses `handler` within its window. If the window is covered, the focus takes effect once it's on top.
+   * Focuses `handler` within its window. If the window is covered, the focus takes effect once it's on top;
+   * if it's still opening (`openTransient()`), once it opens.
    * @param {Handler} handler
-   * @throws {Error} If `handler` isn't in an open window.
+   * @throws {Error} If `handler` isn't in an open or opening window.
    */
   focus(handler) {
-    const entry = this.#entryOf(handler);
-    if (!entry) {
-      throw new Error(`Handler "${handler.path}" isn't in an open window, so it can't take the focus`);
+    for (let node = /** @type {Handler | null} */ (handler); node; node = node.parent) {
+      if (this.#opening.has(node)) {
+        this.#opening.set(node, handler);
+        return;
+      }
+      const entry = this.#entries.find((candidate) => candidate.handler === node);
+      if (entry) {
+        if (entry.focus !== handler) {
+          entry.focus = handler;
+          this.#notify();
+        }
+        return;
+      }
     }
-    if (entry.focus !== handler) {
-      entry.focus = handler;
-      this.#notify();
-    }
+    throw new Error(`Handler "${handler.path}" isn't in an open window, so it can't take the focus`);
   }
 
   /**

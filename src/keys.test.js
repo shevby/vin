@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseKeys, isChord } = require('./keys');
+const { parseKeys, isChord, chordText } = require('./keys');
 
 test('parses VS Code-style sequences into canonical chords', () => {
   /** @type {[string, string[]][]} */
@@ -56,4 +56,24 @@ test('isChord accepts exactly one canonical chord', () => {
   assert.ok(!isChord('g g'));
   assert.ok(!isChord('Enter'));
   assert.ok(!isChord(42));
+});
+
+test('chordText gives the character a chord types, or null', () => {
+  /** @type {[string, string | null][]} */
+  const cases = [
+    ['j', 'j'],
+    ['shift+g', 'G'],
+    ['shift+ж', 'Ж'],
+    [':', ':'],
+    ['+', '+'],
+    ['space', ' '],
+    ['enter', null],
+    ['shift+tab', null],
+    ['ctrl+w', null],
+    ['alt+x', null],
+    ['ctrl+shift+a', null],
+  ];
+  for (const [chord, text] of cases) {
+    assert.equal(chordText(chord), text, chord);
+  }
 });
