@@ -5,6 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const Vin = require('../../../vin');
 const { paths } = require('../../../paths');
+const { failure } = require('../../../errors');
+const { opener } = require('../../../open');
 const Pane = require('./pane');
 
 /**
@@ -117,7 +119,34 @@ test('the cursor moves by one, by pages, and to the ends, staying in the listing
   assert.throws(() => pane.setPageSize(0), TypeError);
 });
 
-test('open enters a directory, parent comes back with the cursor on it, and a file says it can\'t be opened yet', async (t) => {
+test('open opens a file with the default app, reporting a failure when it comes; enter only enters', async (t) => {
+  const dir = tempDir(t, { d: null, 'f.txt': '', 'g h.txt': '' });
+  const { vin, pane } = await open(dir);
+  await pane.loaded;
+  /** @type {string[]} */
+  const opened = [];
+  t.mock.method(opener, 'openWithDefaultApp', async (/** @type {string} */ file) => {
+    opened.push(file);
+    if (file.endsWith('h.txt')) {
+      throw failure("Can't open g h.txt: no app");
+    }
+  });
+  pane.down();
+  await pane.enter();
+  assert.deepEqual(opened, [], 'enter: nothing on a file');
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  await pane.open();
+  pane.down();
+  await pane.open();
+  assert.deepEqual(opened, [path.join(dir, 'f.txt'), path.join(dir, 'g h.txt')]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(vin.messages.list.map((message) => message.text), ["Can't open g h.txt: no app"]);
+  pane.first();
+  await pane.enter();
+  assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'd')));
+});
+
+test('open enters a directory, and parent comes back with the cursor on it', async (t) => {
   const dir = tempDir(t, { a: null, b: null, 'f.txt': '' });
   fs.writeFileSync(path.join(dir, 'b', 'inner.txt'), '');
   fs.mkdirSync(path.join(dir, 'b', 'deep'));
@@ -134,9 +163,7 @@ test('open enters a directory, parent comes back with the cursor on it, and a fi
   assert.equal(current(pane), 'b', 'on the directory it came from');
   await pane.open();
   assert.equal(current(pane), 'inner.txt', 'back where it was left');
-  await pane.open();
-  assert.deepEqual(vin.messages.list.map((message) => message.text), ["Opening files isn't supported yet"]);
-  assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'b')));
+  assert.deepEqual(vin.messages.list, []);
 });
 
 test('back and forward go through the history, which a new directory cuts short', async (t) => {

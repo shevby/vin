@@ -7,6 +7,7 @@ const { paths } = require('../../paths');
 const Vin = require('../../vin');
 const Confirm = require('../confirm/confirm');
 const Main = require('./main');
+const { opener } = require('../../open');
 const { tick } = require('../../../test/dialogs');
 
 /**
@@ -128,4 +129,21 @@ test('keys move the cursor and go into and out of directories, and back and forw
   assert.deepEqual(where(), [home, 'a']);
   await go('~');
   assert.equal(pane.state.uri, paths.toUri(paths.home));
+});
+
+test('Enter and Right open a file; l, bound to pane.enter in the config, only enters directories', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vin-main-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'f'), '');
+  /** @type {string[]} */
+  const opened = [];
+  t.mock.method(opener, 'openWithDefaultApp', async (/** @type {string} */ file) => {
+    opened.push(file);
+  });
+  const { main, press } = await open(`{ keybindings: [{ key: 'l', command: 'pane.enter' }] }`, { left: paths.toUri(dir) });
+  await main.left.loaded;
+  await press('enter');
+  await press('right');
+  await press('l');
+  assert.deepEqual(opened, [path.join(dir, 'f'), path.join(dir, 'f')]);
 });
