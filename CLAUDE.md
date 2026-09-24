@@ -105,8 +105,8 @@ A vifm-inspired terminal file manager with support for network protocols and use
   - Both go through a `Transport` (`src/transport.js`) with two operations — `call(path, args)` and `subscribe(handler, listener)`. `Vin` hands the TUI an in-process one; it still copies arguments and results as JSON and reduces errors to their message and `code`, so nothing works in-process that would break over JSON-RPC. The UI never imports `Vin` or handlers directly.
   - Every handler has a name, and every UI window connects to its handler by that name — a sub-handler's name is the dotted chain down to it (`handler.subhandler`), so `handler.subhandler.method()` calls `method` on that sub-handler directly.
 - Paths (`src/paths.js`) — kept in native absolute form; `paths.resolve(input, base)` reads any typed or pasted form (or throws an `EPATH` error with the reason), `paths.display(path)` shows it Unix-style. Its header lists the Windows edge cases.
-- File access: a `FileSystemProvider`-style interface (`stat`, `readDirectory`, `readFile`, `writeFile`, `rename`, `delete`, `watch`, …), implemented once per protocol and consumed uniformly everywhere else (modeled on VS Code's `FileSystemProvider`).
-  - First iteration: local disk only.
+- File access (`src/fs/`): a `FileSystemProvider` interface (`stat`, `readDirectory`, `createDirectory`, `readFile`, `writeFile`, `delete`, `rename`, optional `copy`, read/write streams, `watch`), implemented once per protocol and consumed uniformly everywhere else (modeled on VS Code's `FileSystemProvider`). Resources are URI strings (`file:///C:/Users/me`; `paths.toUri()`/`fromUri()`) whose scheme picks the provider; handlers use `this.fs`, which dispatches. Every provider fails with Node's `fs` error codes (`ENOENT`, `EEXIST`, …), and never replaces anything unless asked (`{ overwrite: true }`).
+  - The local disk (`src/fs/local.js`) is the only provider so far; moving between providers waits for 5.5, the OS trash for 2.9.
   - Network protocols are in scope for later — SFTP via [`ssh2`](https://github.com/mscdex/ssh2)/[`ssh2-sftp-client`](https://www.npmjs.com/package/ssh2-sftp-client), FTP/FTPS via [`basic-ftp`](https://www.npmjs.com/package/basic-ftp). WebDAV excluded for now.
   - TBD: whether a protocol provider is its own concept alongside `Handler`, or just a specific kind of Handler.
 
@@ -161,7 +161,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 1.8 TUI window manager — overlays (see Glossary) stacked over the main view, with focus and key input routed to the topmost one.
 - [x] 1.9 Configuration — `config.json5` in the project root, user values merged over defaults declared in code, validated with readable errors.
 - [x] 1.10 Path module — parses Windows native (`C:\…`) and Git Bash (`/c/…`) forms, UNC shares, and `~`; displays Unix-style (`~/…`, `/c/…`), keeping the native form for the OS.
-- [ ] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
+- [x] 1.11 `FileSystemProvider` and the local-disk provider — the interface from Architecture plus `createDirectory`, `copy`, and streamed reads/writes, so large and cross-provider copies never buffer whole files; resources addressed by URI whose scheme picks the provider (as in VS Code).
 - [ ] 1.12 Error reporting — expected failures (`EACCES`, `ENOENT`, `EBUSY`, …) shown as messages in the UI, never crashes; unexpected ones also go to the log (0.8).
 - [ ] 1.14 Standard dialogs — confirm, text input, and choice list as reusable windows (1.8), with their keys, for delete (2.9), rename and create (2.7), conflict prompts (2.10), and passphrases (5.2). *(proposed)*
 
@@ -209,7 +209,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 
 ### 5. Network protocols
 
-- [ ] 5.1 Decide the Architecture TBD — protocol provider as its own concept or a kind of Handler; if the latter, protocols could ship as native plugins.
+- [ ] 5.1 Decide the Architecture TBD — protocol provider as its own concept or a kind of Handler; if the latter, protocols could ship as native plugins. A foreign one can't hand over Node streams, so its reads and writes need chunks over JSON-RPC.
 - [ ] 5.2 Connections — saved in config (host, port, user, auth method); SSH agent or key files, with passphrase/password prompts at connect time — secrets never stored in plain config; SFTP host keys checked against `known_hosts` (ssh2 only verifies through a caller-supplied `hostVerifier`).
 - [ ] 5.3 SFTP provider (`ssh2-sftp-client`) — the full provider interface including streams; SFTP has no change notifications, so `watch` falls back to polling or manual refresh.
 - [ ] 5.4 FTP/FTPS provider (`basic-ftp`) — prefer FTPS (plain FTP sends credentials in cleartext); one operation at a time per connection, so queue operations or pool connections.
