@@ -212,6 +212,16 @@ class Handler {
   }
 
   /**
+   * The user's configuration: `this.config.get('pane.showHidden')` is the user's value, if set and valid, or
+   * else the option's default. Options are declared in `static contributes.configuration`, by any handler.
+   * @returns {import('./config').ConfigReader}
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
+   */
+  get config() {
+    return this.#host('read the configuration').config;
+  }
+
+  /**
    * @param {string} action For the error message.
    * @returns {import('./host').Host}
    */

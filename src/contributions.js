@@ -75,9 +75,38 @@ const { cloneData, deepFreeze } = require('./state');
  */
 
 /**
+ * An option the user can set in `config.json5`, under the contributor's name: `pane: { showHidden: true }`.
+ * Read it anywhere with `this.config.get('pane.showHidden')`.
+ * @typedef {object} OptionContribution
+ * @property {string} key A name; its id becomes `<kind>.<key>`.
+ * @property {OptionType} type
+ * @property {Data} default Used when the user doesn't set it; must be valid itself.
+ * @property {string} [description] Shown in the generated config file (and later in help).
+ * @property {(string | number)[]} [enum] The only values allowed.
+ * @property {number} [minimum] For numbers.
+ * @property {number} [maximum] For numbers.
+ */
+
+/** @typedef {'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object'} OptionType */
+
+/**
+ * @typedef {object} Option
+ * @property {string} id `<kind>.<key>`, e.g. `core.keyTimeout`.
+ * @property {string} kind The section of `config.json5` it's set in.
+ * @property {string} key
+ * @property {OptionType} type
+ * @property {Data} default
+ * @property {string | null} description
+ * @property {(string | number)[] | null} enum
+ * @property {number | null} minimum
+ * @property {number | null} maximum
+ * @property {string} source
+ */
+
+/**
  * What a handler class declares in `static contributes` — and, later, what a plugin declares under
  * `contributes` in `plugin.json5`: items for each extension point, by the point's name.
- * @typedef {{ commands?: CommandContribution[], keybindings?: KeybindingContribution[], contextMenu?: MenuContribution[], [point: string]: unknown[] | undefined }} Contributes
+ * @typedef {{ commands?: CommandContribution[], keybindings?: KeybindingContribution[], contextMenu?: MenuContribution[], configuration?: OptionContribution[], [point: string]: unknown[] | undefined }} Contributes
  */
 
 /**
@@ -85,6 +114,7 @@ const { cloneData, deepFreeze } = require('./state');
  * @property {string} source Who contributes: a handler kind (later, also a plugin name).
  * @property {AnyHandler} [handler] An instance of that kind, when it's a handler, to check items against.
  * @property {boolean} [user] The user's own config: applied after everything else, and may remove items.
+ * @property {(index: number) => string} [where] Names an item in errors; default `<point>[<index>] from "<source>"`.
  */
 
 /**
@@ -122,6 +152,7 @@ class Registry {
     this.definePoint('commands', normalizeCommand);
     this.definePoint('keybindings', normalizeKeybinding, composeKeybindings);
     this.definePoint('contextMenu', normalizeMenuEntry);
+    this.definePoint('configuration', normalizeOption);
   }
 
   /**
@@ -171,7 +202,8 @@ class Registry {
     if (!Array.isArray(items)) {
       throw new TypeError(`"${point}" from "${context.source}" must be an array`);
     }
-    const normalized = items.map((item, i) => deepFreeze(normalize(item, context, `${point}[${i}] from "${context.source}"`)));
+    const where = context.where ?? ((/** @type {number} */ i) => `${point}[${i}] from "${context.source}"`);
+    const normalized = items.map((item, i) => deepFreeze(normalize(item, context, where(i))));
 
     /** @type {Map<unknown, string>} */
     const ids = new Map();
@@ -224,6 +256,14 @@ class Registry {
    */
   command(id) {
     return /** @type {Command[]} */ (/** @type {unknown} */ (this.get('commands'))).find((command) => command.id === id);
+  }
+
+  /**
+   * @param {string} id
+   * @returns {Option | undefined}
+   */
+  option(id) {
+    return /** @type {Option[]} */ (/** @type {unknown} */ (this.get('configuration'))).find((option) => option.id === id);
   }
 
   /**
@@ -424,7 +464,7 @@ function fields(item, where) {
   return {
     /**
      * @param {string} key
-     * @param {'string' | 'number' | 'boolean' | 'array'} type
+     * @param {'string' | 'number' | 'boolean' | 'array' | 'data'} type `data` is any JSON data.
      * @param {unknown[]} fallback Omitted: the field is required.
      * @returns {any}
      */
@@ -437,10 +477,16 @@ function fields(item, where) {
         }
         throw new TypeError(`${where} needs "${key}"`);
       }
-      if (type === 'array' ? !Array.isArray(value) : typeof value !== type) {
-        throw new TypeError(`${where}: "${key}" must be ${type === 'array' ? 'an array' : `a ${type}`}`);
+      if (type === 'data' || type === 'array') {
+        if (type === 'array' && !Array.isArray(value)) {
+          throw new TypeError(`${where}: "${key}" must be an array`);
+        }
+        return cloneData(value, [key], { what: where });
       }
-      return type === 'array' ? cloneData(value, [key], { what: where }) : value;
+      if (typeof value !== type) {
+        throw new TypeError(`${where}: "${key}" must be a ${type}`);
+      }
+      return value;
     },
     done() {
       const unknown = Object.keys(record).find((key) => !read.has(key));
@@ -544,4 +590,95 @@ function normalizeMenuEntry(item, { source }, where) {
   return { command, title, group, order, args, source };
 }
 
-module.exports = { Registry };
+const OPTION_TYPES = ['boolean', 'number', 'integer', 'string', 'array', 'object'];
+
+/** @type {Normalize} */
+function normalizeOption(item, { source, user = false }, where) {
+  const read = fields(item, where);
+  /** @type {string} */
+  const key = read.get('key', 'string');
+  /** @type {string} */
+  const type = read.get('type', 'string');
+  const fallback = read.get('default', 'data');
+  const description = read.get('description', 'string', null);
+  /** @type {Data[] | null} */
+  const allowed = read.get('enum', 'array', null);
+  /** @type {number | null} */
+  const minimum = read.get('minimum', 'number', null);
+  /** @type {number | null} */
+  const maximum = read.get('maximum', 'number', null);
+  read.done();
+  if (user) {
+    throw new TypeError(`${where}: options are declared by handlers and plugins, not by user config`);
+  }
+  if (!isName(key)) {
+    throw new TypeError(`${where}: invalid option key "${key}": use a letter, then letters, digits, "-" or "_"`);
+  }
+  if (!OPTION_TYPES.includes(type)) {
+    throw new TypeError(`${where}: "type" must be one of ${OPTION_TYPES.map((t) => `"${t}"`).join(', ')}; got "${type}"`);
+  }
+  if (allowed && !allowed.every((value) => typeof value === 'string' || typeof value === 'number')) {
+    throw new TypeError(`${where}: "enum" may only hold strings and numbers`);
+  }
+  /** @type {Option} */
+  const option = {
+    id: `${source}.${key}`,
+    kind: source,
+    key,
+    type: /** @type {OptionType} */ (type),
+    default: fallback,
+    description,
+    enum: /** @type {(string | number)[] | null} */ (allowed),
+    minimum,
+    maximum,
+    source,
+  };
+  const problem = checkOptionValue(option, fallback);
+  if (problem) {
+    throw new TypeError(`${where}: the default ${problem}`);
+  }
+  return /** @type {{ [key: string]: Data }} */ (/** @type {unknown} */ (option));
+}
+
+/**
+ * Checks a value against an option's type, `enum`, and bounds.
+ * @param {Pick<Option, 'type' | 'enum' | 'minimum' | 'maximum'>} option
+ * @param {Data} value JSON data.
+ * @returns {string | null} What's wrong, as the end of a sentence (`must be a boolean; got "yes"`), or
+ *   `null` if it's valid.
+ */
+function checkOptionValue(option, value) {
+  const got = `; got ${describe(value)}`;
+  const { type } = option;
+  const valid =
+    type === 'array' ? Array.isArray(value)
+    : type === 'object' ? typeof value === 'object' && value !== null && !Array.isArray(value)
+    : type === 'integer' ? Number.isInteger(value)
+    : typeof value === type;
+  if (!valid) {
+    return `must be ${['array', 'object', 'integer'].includes(type) ? 'an' : 'a'} ${type}${got}`;
+  }
+  if (option.enum && !option.enum.includes(/** @type {string | number} */ (value))) {
+    return `must be one of ${option.enum.map(describe).join(', ')}${got}`;
+  }
+  if (typeof value === 'number') {
+    if (option.minimum !== null && value < option.minimum) {
+      return `must be at least ${option.minimum}${got}`;
+    }
+    if (option.maximum !== null && value > option.maximum) {
+      return `must be at most ${option.maximum}${got}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * A value as it's written in the config file, shortened.
+ * @param {Data} value
+ */
+function describe(value) {
+  const text = JSON.stringify(value);
+  return text.length > 40 ? `${text.slice(0, 37)}...` : text;
+}
+
+module.exports = { Registry, checkOptionValue };

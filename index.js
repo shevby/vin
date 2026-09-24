@@ -6,6 +6,7 @@ log.info('vin starting', { node: process.version, platform: process.platform, ar
 
 new Vin().start().catch((error) => {
   log.error(error);
-  console.error(error);
+  // A config mistake is the user's to fix, so it gets its list of problems, not a stack trace.
+  console.error(error?.code === 'ECONFIG' ? error.message : error);
   process.exitCode = 1;
 });

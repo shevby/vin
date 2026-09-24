@@ -2,6 +2,7 @@
  * @typedef {InstanceType<typeof import('./events').EventBus>} EventBus
  * @typedef {InstanceType<typeof import('./handler')>} Handler
  * @typedef {InstanceType<typeof import('./windows').WindowStack>} WindowStack
+ * @typedef {import('./config').ConfigReader} ConfigReader
  */
 
 /**
@@ -10,6 +11,7 @@
  * @typedef {object} Host
  * @property {EventBus} events
  * @property {WindowStack} windows
+ * @property {ConfigReader} config
  * @property {(handler: Handler) => () => void} attach Called when a handler of the tree is initialized; returns
  *   what to call when it is disposed.
  */
