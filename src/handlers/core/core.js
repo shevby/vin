@@ -24,15 +24,24 @@ const { KeySequencer } = require('../../keymap');
  * - `messages` lists the messages to show (`src/messages.js`), until the next key press clears them.
  * - `colors` is the color scheme (`src/colors.js`): every declared group's style, by id, with the user's
  *   changes. It declares the groups every window shares; the rest come from the kinds that draw them.
- * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[], colors: { [id: string]: Style } }>}
+ * - `quitting` turns `true` when vin should exit (`quit`); the UI then closes, and `Vin#start` disposes
+ *   the handlers.
+ * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[], colors: { [id: string]: Style }, quitting: boolean }>}
  */
 class Core extends Handler {
   static kind = 'core';
 
   /** @type {import('../../contributions').Contributes} */
   static contributes = {
-    commands: [{ method: 'closeWindow', title: 'Close window', description: 'Closes the window on top, unless it is the main window' }],
-    keybindings: [{ key: 'escape', command: 'core.closeWindow' }],
+    commands: [
+      { method: 'closeWindow', title: 'Close window', description: 'Closes the window on top, unless it is the main window' },
+      { method: 'quit', title: 'Quit', description: 'Exits vin' },
+    ],
+    keybindings: [
+      { key: 'escape', command: 'core.closeWindow' },
+      // Until the command line (6) brings :q.
+      { key: 'z z', command: 'core.quit' },
+    ],
     configuration: [
       {
         key: 'keyTimeout',
@@ -106,6 +115,7 @@ class Core extends Handler {
       pendingKeys: '',
       messages: messages.list,
       colors: this.#colors(),
+      quitting: false,
     });
     let focus = windows.focused;
     this.#unsubscribe.push(
@@ -230,6 +240,11 @@ class Core extends Handler {
    */
   closeWindow() {
     return this.#windows.closeTop();
+  }
+
+  /** Asks the UI to exit (`quitting`); once it has, `Vin#start` disposes the handlers and returns. */
+  quit() {
+    this.state.quitting = true;
   }
 }
 

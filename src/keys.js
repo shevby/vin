@@ -2,7 +2,9 @@
  * Key notation, VS Code style: a chord is modifiers and a key joined by `+` (`ctrl+w`, `shift+tab`), and a
  * sequence is chords separated by spaces (`g g`, `ctrl+w h`).
  *
- * - Modifiers: `ctrl`, `alt`, `shift`, in any order and case; the canonical order is `ctrl+alt+shift+`.
+ * - Modifiers: `ctrl`, `alt`, `shift`, `cmd`, in any order and case; the canonical order is
+ *   `ctrl+alt+shift+cmd+`. `cmd` is Cmd on macOS and the Windows/Super key elsewhere; terminals report it
+ *   only through the kitty keyboard protocol, and most keep Cmd shortcuts for themselves.
  * - Named keys (any case): the ones in `NAMED_KEYS` — `space`, `enter`, `escape`, arrows, ….
  * - Function keys (`f1`–`f12`) are left to the OS and can't be bound.
  * - Any other key is the single character it types: `j`, `:`, `?`, `+`. An uppercase letter means
@@ -16,7 +18,7 @@ const NAMED_KEYS = new Set([
   'up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown',
 ]);
 
-const MODIFIERS = /** @type {const} */ (['ctrl', 'alt', 'shift']);
+const MODIFIERS = /** @type {const} */ (['ctrl', 'alt', 'shift', 'cmd']);
 
 /**
  * Parses a key sequence into canonical chords.
@@ -40,7 +42,7 @@ function parseChord(chord, text) {
   /** @type {Set<string>} */
   const modifiers = new Set();
   let rest = chord;
-  for (let match; (match = /^(ctrl|alt|shift)\+(.+)$/i.exec(rest)); rest = match[2]) {
+  for (let match; (match = /^(ctrl|alt|shift|cmd)\+(.+)$/i.exec(rest)); rest = match[2]) {
     const modifier = match[1].toLowerCase();
     if (modifiers.has(modifier)) {
       throw new TypeError(`Key "${text}": "${chord}" repeats ${modifier}`);
@@ -89,7 +91,7 @@ function isChord(chord) {
 /**
  * The text a chord types, if it types any: `j` → `j`, `shift+g` → `G`, `:` → `:`, `space` → ` `.
  * @param {string} chord A canonical chord.
- * @returns {string | null} `null` for a named key (`enter`, `left`) or a chord with Ctrl or Alt.
+ * @returns {string | null} `null` for a named key (`enter`, `left`) or a chord with Ctrl, Alt, or Cmd.
  */
 function chordText(chord) {
   if (chord === 'space' || chord === 'shift+space') {

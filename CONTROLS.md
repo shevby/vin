@@ -6,7 +6,8 @@ Living reference for keybindings. This is deliberately separate from `CLAUDE.md`
 
 Keybindings — built-in, from plugins, and in user config — use VS Code-style notation:
 
-- A chord is modifiers and a key joined by `+`: `ctrl+w`, `alt+x`, `shift+tab`. Modifiers are `ctrl`, `alt`, and `shift`, in any order and case.
+- A chord is modifiers and a key joined by `+`: `ctrl+w`, `alt+x`, `shift+tab`, `cmd+c`. Modifiers are `ctrl`, `alt`, `shift`, and `cmd`, in any order and case.
+- `cmd` is Cmd on macOS (the Windows/Super key elsewhere). A terminal reports it only through the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (kitty, WezTerm, Ghostty, iTerm2, …), which vin turns on where it's supported — and only for shortcuts the terminal doesn't keep for itself (most take `cmd+c`/`cmd+v` for their own copy and paste unless you unbind them). So a `cmd+` binding always comes with a `ctrl+` one.
 - A sequence is chords separated by spaces: `g g`, `d d`, `ctrl+w h`. A sequence waits up to a second for its next key.
 - Named keys: `space`, `tab`, `enter`, `escape`, `backspace`, `delete`, `insert`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`.
 - Function keys (`f1`–`f12`) are left to the OS: vin never binds them, and a binding that uses one is rejected.
@@ -19,6 +20,8 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
 - `Escape` closes the window on top (a dialog, a menu), never the main window.
+- `z z` quits — for now: it goes once the command line brings `:q` (6.2).
+- `ctrl+c`, `ctrl+x`, `ctrl+v` are copy, cut, and paste, as in Windows and Linux file managers — and on macOS `cmd+c`, `cmd+x`, `cmd+v` as well (2.7). `ctrl+c` doesn't quit.
 - A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
 - Everything else: TBD, added as it's built and tried out.
 

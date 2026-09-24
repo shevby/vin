@@ -14,6 +14,9 @@ test('parses VS Code-style sequences into canonical chords', () => {
     ['ctrl+w h', ['ctrl+w', 'h']],
     ['shift+ctrl+alt+x', ['ctrl+alt+shift+x']],
     ['Ctrl+Shift+Tab', ['ctrl+shift+tab']],
+    ['cmd+c', ['cmd+c']],
+    ['Cmd+Shift+Z', ['shift+cmd+z']],
+    ['cmd+ctrl+x', ['ctrl+cmd+x']],
     ['space', ['space']],
     ['Enter', ['enter']],
     ['escape', ['escape']],
@@ -51,6 +54,8 @@ test('explains malformed keys', () => {
 test('isChord accepts exactly one canonical chord', () => {
   assert.ok(isChord('j'));
   assert.ok(isChord('ctrl+alt+shift+x'));
+  assert.ok(isChord('ctrl+alt+shift+cmd+x'));
+  assert.ok(!isChord('cmd+shift+x'), 'cmd comes last');
   assert.ok(!isChord('G'), 'canonical is shift+g');
   assert.ok(!isChord('shift+ctrl+x'), 'canonical order is ctrl+alt+shift');
   assert.ok(!isChord('g g'));
@@ -68,6 +73,7 @@ test('chordText gives the character a chord types, or null', () => {
     ['+', '+'],
     ['space', ' '],
     ['enter', null],
+    ['cmd+c', null],
     ['shift+tab', null],
     ['ctrl+w', null],
     ['alt+x', null],

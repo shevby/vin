@@ -110,6 +110,14 @@ test('with no window open, only core bindings apply', async () => {
   assert.equal(await vin.call('core.press', 'escape'), true);
 });
 
+test('z z asks the UI to quit, from any window', async () => {
+  const { vin, press } = await setup();
+  const core = vin.resolve('core');
+  assert.equal(core.state.quitting, false);
+  assert.deepEqual(await press('z z', 'main.left'), [true, true]);
+  assert.equal(core.state.quitting, true);
+});
+
 test('sequences show their pending keys in core state', async () => {
   const { vin, press } = await setup();
   /** @type {string[]} */
@@ -151,7 +159,7 @@ test('user config adds bindings after the defaults and removes them with -comman
   );
   assert.deepEqual(
     vin.registry.get('keybindings').map((b) => `${b.key} ${b.command}`),
-    ['escape core.closeWindow', 'tab main.swap', 'j main.down', 'v pane.visual', 'j pane.mark', 'shift+j pane.down', 'ctrl+w w main.swap'],
+    ['escape core.closeWindow', 'z z core.quit', 'tab main.swap', 'j main.down', 'v pane.visual', 'j pane.mark', 'shift+j pane.down', 'ctrl+w w main.swap'],
   );
   await press('shift+j', 'main.left');
   await press('j', 'main.left');
