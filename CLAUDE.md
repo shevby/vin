@@ -19,6 +19,7 @@ A vifm-inspired terminal file manager with support for network protocols and use
 - Always write JSDoc for every class, function, method, and exported value — `@param`, `@returns`, `@typedef`, `@type` — so VS Code gives autocompletion and hover docs in plain JS.
 - When JSDoc isn't enough (overloads, complex generics, a plugin-facing API, or the shape of a module crossing the CommonJS/ESM boundary), add a `.d.ts` next to the file (`foo.js` → `foo.d.ts`). A sibling `.d.ts` replaces the inferred types for everyone importing that file, so keep it complete and in sync.
 - `jsconfig.json` configures VS Code's JS language service (module resolution, JSX) with `checkJs` on, so type errors show in the editor; `npm run typecheck` runs the same check with TypeScript 7, which is used only as a checker, never to compile. `@types/node` is pinned to the Node major version in use.
+- Debug output goes through `log` from `src/log.js`, never `console` — Ink owns stdout/stderr while the TUI runs. Set `VIN_LOG=<file>` to enable it; unset, logging is a no-op.
 
 ## Project Structure
 
@@ -111,7 +112,7 @@ Feature roadmap; milestones are in rough dependency order. Item IDs (`2.3`) are 
 - [x] 0.5 `npm run typecheck` — TypeScript as a dev-only checker of the JSDoc types (`tsc --noEmit`; code stays plain JS); run it with the tests before merging.
 - [x] 0.6 Tests for `.jsx` components — a module hook transpiles JSX on load; ink-testing-library 4 works with Ink 7.
 - [x] 0.7 `prepare` script that builds `dist/` (it's git-ignored), so a fresh `npm install` + `npm link` gives a working global `vin`.
-- [ ] 0.8 Debug log file — stdout/stderr belong to Ink while the TUI runs.
+- [x] 0.8 Debug log file (`VIN_LOG=<file>`) — stdout/stderr belong to Ink while the TUI runs.
 
 ### 1. Core architecture
 
