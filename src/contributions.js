@@ -1,10 +1,13 @@
 const Handler = require('./handler');
+const { checkStyle } = require('./colors');
 const { parseKeys } = require('./keys');
 const { isName, isPath } = require('./names');
 const { cloneData, deepFreeze } = require('./state');
 
 /**
  * @typedef {import('./state').Data} Data
+ * @typedef {import('./colors').ColorContribution} ColorContribution
+ * @typedef {import('./colors').ColorGroup} ColorGroup
  * @typedef {InstanceType<typeof Handler>} AnyHandler
  */
 
@@ -106,7 +109,7 @@ const { cloneData, deepFreeze } = require('./state');
 /**
  * What a handler class declares in `static contributes` — and, later, what a plugin declares under
  * `contributes` in `plugin.json5`: items for each extension point, by the point's name.
- * @typedef {{ commands?: CommandContribution[], keybindings?: KeybindingContribution[], contextMenu?: MenuContribution[], configuration?: OptionContribution[], [point: string]: unknown[] | undefined }} Contributes
+ * @typedef {{ commands?: CommandContribution[], keybindings?: KeybindingContribution[], contextMenu?: MenuContribution[], configuration?: OptionContribution[], colors?: ColorContribution[], [point: string]: unknown[] | undefined }} Contributes
  */
 
 /**
@@ -153,6 +156,7 @@ class Registry {
     this.definePoint('keybindings', normalizeKeybinding, composeKeybindings);
     this.definePoint('contextMenu', normalizeMenuEntry);
     this.definePoint('configuration', normalizeOption);
+    this.definePoint('colors', normalizeColor);
   }
 
   /**
@@ -264,6 +268,14 @@ class Registry {
    */
   option(id) {
     return /** @type {Option[]} */ (/** @type {unknown} */ (this.get('configuration'))).find((option) => option.id === id);
+  }
+
+  /**
+   * @param {string} id
+   * @returns {ColorGroup | undefined}
+   */
+  color(id) {
+    return /** @type {ColorGroup[]} */ (/** @type {unknown} */ (this.get('colors'))).find((group) => group.id === id);
   }
 
   /**
@@ -638,6 +650,29 @@ function normalizeOption(item, { source, user = false }, where) {
     throw new TypeError(`${where}: the default ${problem}`);
   }
   return /** @type {{ [key: string]: Data }} */ (/** @type {unknown} */ (option));
+}
+
+/** @type {Normalize} */
+function normalizeColor(item, { source, user = false }, where) {
+  const read = fields(item, where);
+  /** @type {string} */
+  const key = read.get('key', 'string');
+  const fallback = read.get('default', 'data');
+  const description = read.get('description', 'string', null);
+  read.done();
+  if (user) {
+    throw new TypeError(`${where}: color groups are declared by handlers and plugins; user config sets them under "colors"`);
+  }
+  if (!isName(key)) {
+    throw new TypeError(`${where}: invalid color group key "${key}": use a letter, then letters, digits, "-" or "_"`);
+  }
+  const problem = checkStyle(fallback);
+  if (problem) {
+    throw new TypeError(`${where}: the default ${problem}`);
+  }
+  /** @type {ColorGroup} */
+  const group = { id: `${source}.${key}`, kind: source, key, default: fallback, description, source };
+  return /** @type {{ [key: string]: Data }} */ (/** @type {unknown} */ (group));
 }
 
 /**

@@ -9,6 +9,7 @@ const { KeySequencer } = require('../../keymap');
  * @typedef {import('../../windows').WindowInfo} WindowInfo
  * @typedef {InstanceType<typeof import('../../messages').Messages>} Messages
  * @typedef {import('../../messages').Message} Message
+ * @typedef {import('../../colors').Style} Style
  */
 
 /**
@@ -21,7 +22,9 @@ const { KeySequencer } = require('../../keymap');
  *   shows a sequence in progress (`g` while waiting for `g g`). A command run by a key that fails is
  *   reported.
  * - `messages` lists the messages to show (`src/messages.js`), until the next key press clears them.
- * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[] }>}
+ * - `colors` is the color scheme (`src/colors.js`): every declared group's style, by id, with the user's
+ *   changes. It declares the groups every window shares; the rest come from the kinds that draw them.
+ * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[], colors: { [id: string]: Style } }>}
  */
 class Core extends Handler {
   static kind = 'core';
@@ -38,6 +41,19 @@ class Core extends Handler {
         minimum: 0,
         description: 'How long a key sequence (g g) waits for its next key, in ms.',
       },
+    ],
+    // papercolor-dark, from vifm-colors; each notes the vifm group it comes from.
+    colors: [
+      { key: 'window', default: { fg: 252, bg: 234 }, description: 'Text and background of every window (vifm: Win).' },
+      { key: 'border', default: { fg: 252 }, description: 'Borders of windows and panes (vifm: Border).' },
+      { key: 'title', default: { fg: 71, bold: true }, description: 'Dialog titles (vifm: TopLine).' },
+      { key: 'highlight', default: { bold: true, inverse: true }, description: 'The highlighted button or choice (vifm: CurrLine).' },
+      { key: 'hotkey', default: { fg: 74 }, description: "A choice's own key, in choice lists." },
+      { key: 'hint', default: { fg: 244 }, description: 'Secondary text: descriptions, "Press any key" (vifm: LineNr).' },
+      { key: 'cursor', default: { inverse: true }, description: 'The cursor in a text field.' },
+      { key: 'error', default: { fg: 160, bold: true }, description: 'Error messages (vifm: ErrorMsg).' },
+      { key: 'warning', default: { fg: 173, bold: true }, description: 'Warnings.' },
+      { key: 'info', default: { fg: 252 }, description: 'Other messages (vifm: CmdLine).' },
     ],
   };
 
@@ -89,11 +105,15 @@ class Core extends Handler {
       windows: windows.windows,
       pendingKeys: '',
       messages: messages.list,
+      colors: this.#colors(),
     });
     let focus = windows.focused;
     this.#unsubscribe.push(
       registry.subscribe((point) => {
         this.state.contributions[point] = registry.get(point);
+        if (point === 'colors') {
+          this.state.colors = this.#colors();
+        }
       }),
       windows.subscribe(() => {
         this.state.windows = windows.windows;
@@ -107,6 +127,15 @@ class Core extends Handler {
         this.state.messages = messages.list;
       }),
     );
+  }
+
+  /**
+   * Every declared color group's style, with the user's changes.
+   * @returns {{ [id: string]: Style }}
+   */
+  #colors() {
+    const groups = /** @type {import('../../colors').ColorGroup[]} */ (/** @type {unknown} */ (this.#registry.get('colors')));
+    return Object.fromEntries(groups.map((group) => [group.id, this.config.style(group.id)]));
   }
 
   onDispose() {

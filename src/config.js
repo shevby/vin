@@ -1,12 +1,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const momoa = require('@humanwhocodes/momoa');
+const { checkStyle } = require('./colors');
 const { checkOptionValue } = require('./contributions');
 const { deepFreeze } = require('./state');
 
 /**
  * @typedef {import('./state').Data} Data
  * @typedef {import('./contributions').Option} Option
+ * @typedef {import('./colors').ColorGroup} ColorGroup
+ * @typedef {import('./colors').Style} Style
  * @typedef {InstanceType<typeof import('./contributions').Registry>} Registry
  * @typedef {import('@humanwhocodes/momoa').AnyNode} Node
  * @typedef {import('@humanwhocodes/momoa').MemberNode} MemberNode
@@ -17,6 +20,8 @@ const { deepFreeze } = require('./state');
  * @typedef {object} ConfigReader
  * @property {(id: string) => Data} get An option's value — the user's, if set and valid, or else its default.
  *   Objects and arrays are frozen. Throws if no handler or plugin declares the option.
+ * @property {(id: string) => Style} style A color group's style (`src/colors.js`): its default, with the
+ *   fields the user set, if valid. Frozen. Throws if no handler or plugin declares the group.
  */
 
 /** Where vin keeps the user's configuration: the project root, git-ignored. */
@@ -24,6 +29,8 @@ const CONFIG_FILE = path.join(__dirname, '..', 'config.json5');
 
 /** The top-level key that holds keybindings rather than a section of options. */
 const KEYBINDINGS = 'keybindings';
+/** The top-level key that holds color groups, by kind, rather than a section of options. */
+const COLORS = 'colors';
 
 /**
  * A configuration file with mistakes; `problems` lists each one as `<file>:<line>:<column>: <what>`.
@@ -49,6 +56,8 @@ class ConfigError extends Error {
  * }
  * ```
  *
+ * Color groups (`src/colors.js`) are declared in the `colors` extension point and set under `colors`, by kind.
+ *
  * Options are declared in the `configuration` extension point (`static contributes.configuration`), so
  * the file is checked in two steps: `load()` parses it and registers its keybindings before handlers are
  * initialized; `check()`, once they are, checks every section and option against what's declared, and the
@@ -71,6 +80,13 @@ class Config {
    */
   #keybindings = [];
   /**
+   * The file's `colors` sections by kind, each with its groups' members by key.
+   * @type {Map<string, { member: MemberNode, groups: Map<string, MemberNode> }>}
+   */
+  #colors = new Map();
+  /** @type {Map<string, Style>} */
+  #styles = new Map();
+  /**
    * Problems found by `load()`, reported by `check()` with the rest.
    * @type {string[]}
    */
@@ -88,7 +104,10 @@ class Config {
      * @type {ConfigReader}
      * @readonly
      */
-    this.reader = Object.freeze({ get: (/** @type {string} */ id) => this.get(id) });
+    this.reader = Object.freeze({
+      get: (/** @type {string} */ id) => this.get(id),
+      style: (/** @type {string} */ id) => this.style(id),
+    });
   }
 
   /**
@@ -125,6 +144,8 @@ class Config {
     this.#file = file;
     this.#sections.clear();
     this.#keybindings = [];
+    this.#colors.clear();
+    this.#styles.clear();
     this.#problems = [];
     this.#values.clear();
 
@@ -145,6 +166,8 @@ class Config {
       const name = keyOf(member);
       if (name === KEYBINDINGS) {
         this.#loadKeybindings(member);
+      } else if (name === COLORS) {
+        this.#loadColors(member);
       } else if (member.value.type !== 'Object') {
         this.#problem(member.value, `"${name}" must be an object of options: ${name}: { … }`);
       } else {
@@ -179,6 +202,27 @@ class Config {
           continue;
         }
         const problem = this.#read(option, node).problem;
+        if (problem) {
+          report(node.value, problem);
+        }
+      }
+    }
+
+    const groups = /** @type {ColorGroup[]} */ (/** @type {unknown} */ (this.#registry.get('colors')));
+    const colorKinds = [...new Set(groups.map((group) => group.kind))];
+    for (const [name, { member, groups: members }] of this.#colors) {
+      if (!colorKinds.includes(name)) {
+        report(member.name, `unknown section "${COLORS}.${name}": nothing declares colors under it${suggest(name, colorKinds)}`);
+        continue;
+      }
+      const keys = groups.filter((group) => group.kind === name).map((group) => group.key);
+      for (const [key, node] of members) {
+        const group = this.#registry.color(`${name}.${key}`);
+        if (!group) {
+          report(node.name, `unknown color group "${name}.${key}"${suggest(key, keys)}`);
+          continue;
+        }
+        const problem = this.#readStyle(group, node).problem;
         if (problem) {
           report(node.value, problem);
         }
@@ -225,6 +269,28 @@ class Config {
   }
 
   /**
+   * A color group's style: its default, with the fields the user set — unless they aren't valid, which
+   * `check()` reports.
+   * @param {string} id `<kind>.<key>`, e.g. `pane.titleActive`.
+   * @returns {Style} Frozen.
+   * @throws {Error} If no handler or plugin declares the group.
+   */
+  style(id) {
+    const group = this.#registry.color(id);
+    if (!group) {
+      throw new Error(`Unknown color group "${id}": no initialized handler or plugin declares it`);
+    }
+    let style = this.#styles.get(id);
+    if (style === undefined) {
+      const node = this.#colors.get(group.kind)?.groups.get(group.key);
+      const read = node ? this.#readStyle(group, node) : { value: undefined, problem: null };
+      style = /** @type {Style} */ (deepFreeze({ ...group.default, ...read.value }));
+      this.#styles.set(id, style);
+    }
+    return style;
+  }
+
+  /**
    * Writes a starting config file that lists every option declared now, commented out with its default and
    * description, and examples of keybindings. It never overwrites an existing file.
    * @param {string} [file]
@@ -246,6 +312,23 @@ class Config {
           .filter(Boolean)
           .join(' ');
         lines.push(`  //   ${option.key}: ${JSON.stringify(option.default)},${note ? ` // ${note}` : ''}`);
+      }
+      lines.push('  // },', '');
+    }
+    const groups = /** @type {ColorGroup[]} */ (/** @type {unknown} */ (this.#registry.get('colors')));
+    if (groups.length) {
+      lines.push(
+        '  // Colors, by the handler or plugin that draws them. fg and bg are 0 to 255, "#rrggbb", a name ("blue",',
+        '  // "redBright"), or "default" (the terminal\'s own); bold, italic, underline, and inverse are true or false.',
+        '  // An entry changes only what it names: { fg: 33 } keeps the rest of the default.',
+        `  // ${COLORS}: {`,
+      );
+      for (const kind of new Set(groups.map((group) => group.kind))) {
+        lines.push(`  //   ${kind}: {`);
+        for (const group of groups.filter((g) => g.kind === kind)) {
+          lines.push(`  //     ${group.key}: ${showStyle(group.default)},${group.description ? ` // ${group.description}` : ''}`);
+        }
+        lines.push('  //   },');
       }
       lines.push('  // },', '');
     }
@@ -298,6 +381,41 @@ class Config {
       const node = element.value.type === 'Object' ? element.value.members.find((m) => keyOf(m) === 'command')?.value : undefined;
       this.#keybindings.push({ command, member: node ?? element.value });
     });
+  }
+
+  /**
+   * @param {MemberNode} member
+   */
+  #loadColors(member) {
+    if (member.value.type !== 'Object') {
+      this.#problem(member.value, `"${COLORS}" must be an object of color groups by kind: ${COLORS}: { pane: { title: { fg: 71 } } }`);
+      return;
+    }
+    for (const section of this.#members(member.value)) {
+      const name = keyOf(section);
+      if (section.value.type !== 'Object') {
+        this.#problem(section.value, `"${COLORS}.${name}" must be an object of color groups: ${name}: { title: { fg: 71 } }`);
+        continue;
+      }
+      const groups = new Map(this.#members(section.value).map((group) => [keyOf(group), group]));
+      this.#colors.set(name, { member: section, groups });
+    }
+  }
+
+  /**
+   * The user's style for a color group, and what's wrong with it, if anything.
+   * @param {ColorGroup} group
+   * @param {MemberNode} member
+   * @returns {{ value: Style | undefined, problem: string | null }}
+   */
+  #readStyle(group, member) {
+    const nonFinite = find(member.value, (node) => node.type === 'NaN' || node.type === 'Infinity');
+    const value = nonFinite ? undefined : /** @type {Data} */ (momoa.evaluate(member.value));
+    const problem = nonFinite ? "can't hold NaN or Infinity" : checkStyle(value);
+    if (problem) {
+      return { value: undefined, problem: `color "${group.id}" ${problem}` };
+    }
+    return { value: /** @type {Style} */ (value), problem: null };
   }
 
   /**
@@ -364,6 +482,15 @@ class Config {
   #at(node) {
     return `${this.#file}:${node.loc.start.line}:${node.loc.start.column}`;
   }
+}
+
+/**
+ * A style as JSON5 on one line: `{ fg: 71, bold: true }`.
+ * @param {Style} style
+ */
+function showStyle(style) {
+  const fields = Object.entries(style).map(([field, value]) => `${field}: ${typeof value === 'string' ? `'${value}'` : value}`);
+  return fields.length ? `{ ${fields.join(', ')} }` : '{}';
 }
 
 /**
