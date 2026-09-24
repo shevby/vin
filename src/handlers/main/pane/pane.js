@@ -8,6 +8,15 @@ const Handler = require('../../../handler');
 class Pane extends Handler {
   static kind = 'pane';
 
+  /** @type {import('../../../contributions').Contributes} */
+  static contributes = {
+    // papercolor-dark, from vifm-colors; see src/colors.js.
+    colors: [
+      { key: 'title', default: { fg: 71, bg: 235, bold: true }, description: "The other pane's directory, in its top border (vifm: TopLine)." },
+      { key: 'titleActive', default: { fg: 234, bg: 149, bold: true }, description: "The active pane's directory (vifm: TopLineSel)." },
+    ],
+  };
+
   /** @type {string} */
   #uri;
 

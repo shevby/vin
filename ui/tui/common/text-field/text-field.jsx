@@ -1,11 +1,12 @@
 import { Box, Text } from 'ink';
 import { init } from '../../handler.js';
 import { useSelector } from '../store/index.js';
+import { useStyle } from '../theme/index.js';
 import { useFocus } from '../windows/index.js';
 
 /**
  * Draws a text field handler (`src/handlers/text-field/`) on one line: its text — as `•`s if it's secret —
- * with the cursor as an inverted cell while it has the focus. Text wider than the field scrolls to keep the
+ * with the cursor as a cell in `core.cursor` while it has the focus. Text wider than the field scrolls to keep the
  * cursor in view.
  * @param {object} props
  * @param {string} props.path The text field handler, e.g. `main.prompt.input`.
@@ -17,12 +18,14 @@ export function TextField({ path, width }) {
   const cursor = useSelector(store, (state) => /** @type {number} */ (state.cursor ?? 0));
   const secret = useSelector(store, (state) => state.secret === true);
   const focused = useFocus() === path;
+  const text = useStyle('core.window');
+  const cursorStyle = useStyle('core.cursor');
   const { before, at, after } = visible([...value].map((char) => (secret ? '•' : char)), cursor, width);
   return (
     <Box width={width} height={1}>
-      <Text wrap="truncate-end">
+      <Text {...text} wrap="truncate-end">
         {before}
-        {focused ? <Text inverse>{at}</Text> : at}
+        {focused ? <Text {...cursorStyle}>{at}</Text> : at}
         {after}
       </Text>
     </Box>

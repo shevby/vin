@@ -98,6 +98,32 @@ test('every mistake is reported with its line and column, and invalid values fal
   assert.equal(vin.config.get('core.keyTimeout'), 1000);
 });
 
+test('color groups are set under colors, by kind; mistakes are reported and fall back to the default', async () => {
+  const { vin, problems } = await load(`{
+  colors: {
+    core: {
+      error: { fg: 'crimson' },
+      eror: { fg: 1 },
+      warning: { fg: '#ff8700', underline: true },
+      hint: 244,
+    },
+    pnae: {},
+    main: [],
+  },
+}`);
+  assert.deepEqual(problems, [
+    'config.json5:4:14: color "core.error" "fg" must be a color — 0 to 255, "#rrggbb", a name like "blue", or "default"; got "crimson"',
+    'config.json5:5:7: unknown color group "core.eror"; did you mean "error"?',
+    'config.json5:7:13: color "core.hint" must be an object like { fg: 74, bold: true }; got 244',
+    'config.json5:9:5: unknown section "colors.pnae": nothing declares colors under it',
+    'config.json5:10:11: "colors.main" must be an object of color groups: main: { title: { fg: 71 } }',
+  ]);
+  assert.deepEqual(vin.config.style('core.error'), { fg: 160, bold: true });
+  assert.deepEqual(vin.config.style('core.warning'), { fg: '#ff8700', bold: true, underline: true });
+  assert.ok(Object.isFrozen(vin.config.style('core.warning')));
+  assert.throws(() => vin.config.style('core.nope'), /Unknown color group "core.nope"/);
+});
+
 test('a syntax error stops at once, and the root must be an object', async () => {
   const vin = new Vin();
   assert.throws(() => vin.config.parse('{ a: 1,, }', 'config.json5'), (error) => {
@@ -186,6 +212,7 @@ test('load() reads a file, and create() writes a commented one listing every opt
   const text = fs.readFileSync(file, 'utf8');
   assert.match(text, /\/\/ pane: \{\n\s+\/\/ {3}showHidden: false, \/\/ Show dotfiles\.\n\s+\/\/ {3}sortBy: "name", \/\/ One of: "name", "size", "modified"\./);
   assert.match(text, /\/\/ {3}keyTimeout: 1000, \/\/ How long a key sequence/);
+  assert.match(text, /\/\/ colors: \{\n\s+\/\/ {3}core: \{\n\s+\/\/ {5}window: \{ fg: 252, bg: 234 \}, \/\/ Text and background/);
   assert.equal(vin.config.load(file), true);
   vin.config.check();
 
@@ -196,4 +223,10 @@ test('load() reads a file, and create() writes a commented one listing every opt
   vin.config.load(file);
   vin.config.check();
   assert.equal(vin.config.get('pane.showHidden'), true, 'uncommenting an option sets it');
+
+  const colors = edited.replace(/\/\/ colors: \{[\s\S]*?\n {2}\/\/ \},/, (block) => block.replace(/^(\s*)\/\/ /gm, '$1'));
+  fs.writeFileSync(file, colors);
+  vin.config.load(file);
+  vin.config.check();
+  assert.deepEqual(vin.config.style('core.title'), { fg: 71, bold: true }, 'uncommenting the colors keeps them as they were');
 });

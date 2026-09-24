@@ -4,6 +4,7 @@ import { log } from '../../../../src/log.js';
 import { paths } from '../../../../src/paths.js';
 import { init, release } from '../../handler.js';
 import { useSelector } from '../store/index.js';
+import { useBackground, useBorder, useStyle } from '../theme/index.js';
 
 /**
  * @typedef {import('../../../../src/windows.js').WindowInfo} WindowInfo
@@ -15,7 +16,7 @@ const NONE = [];
 
 /**
  * Not a color Ink knows, so it paints a box's background with plain spaces in the terminal's own colors —
- * which is what makes an overlay opaque without choosing a color for it.
+ * which keeps an overlay opaque when the color scheme leaves the background to the terminal.
  */
 const BLANK = 'blank';
 
@@ -62,6 +63,7 @@ export function useFocus() {
  */
 export function Windows({ components, children }) {
   const windows = useWindows();
+  const background = useBackground() ?? BLANK;
   if (!windows.length) {
     return <>{children}</>;
   }
@@ -71,7 +73,7 @@ export function Windows({ components, children }) {
       <Window window={base} components={components} />
       {overlays.map((window) => (
         <Box key={window.id} position="absolute" width="100%" height="100%" justifyContent="center" alignItems="center">
-          <Box backgroundColor={BLANK} flexDirection="column">
+          <Box backgroundColor={background} flexDirection="column">
             <Window window={window} components={components} />
           </Box>
         </Box>
@@ -88,16 +90,28 @@ export function Windows({ components, children }) {
 function Window({ window, components }) {
   const Component = Object.hasOwn(components, window.kind) ? components[window.kind] : null;
   if (!Component) {
-    return (
-      <Box borderStyle="round" paddingX={1}>
-        <Text>No TUI for window "{window.path}" ({window.kind})</Text>
-      </Box>
-    );
+    return <Placeholder window={window} />;
   }
   return (
     <WindowBoundary key={window.id} path={window.path}>
       <Component path={window.path} />
     </WindowBoundary>
+  );
+}
+
+/**
+ * Stands in for a window of a kind with no component.
+ * @param {{ window: WindowInfo }} props
+ */
+function Placeholder({ window }) {
+  const border = useBorder();
+  const text = useStyle('core.window');
+  return (
+    <Box borderStyle="round" {...border} paddingX={1}>
+      <Text {...text}>
+        No TUI for window "{window.path}" ({window.kind})
+      </Text>
+    </Box>
   );
 }
 
@@ -129,13 +143,20 @@ class WindowBoundary extends Component {
       return this.props.children;
     }
     const where = log.file ? ` — details in ${paths.display(log.file)}` : '';
-    return (
-      <Box borderStyle="round" borderColor="red" paddingX={1}>
-        <Text color="red">
-          Window "{this.props.path}" can't be drawn: {error instanceof Error ? error.message : String(error)}
-          {where}
-        </Text>
-      </Box>
-    );
+    return <WindowError text={`Window "${this.props.path}" can't be drawn: ${error instanceof Error ? error.message : String(error)}${where}`} />;
   }
+}
+
+/**
+ * What `WindowBoundary` shows in place of a window that failed to draw, in `core.error`.
+ * @param {{ text: string }} props
+ */
+function WindowError({ text }) {
+  const border = useBorder('core.error');
+  const style = useStyle('core.error');
+  return (
+    <Box borderStyle="round" {...border} paddingX={1}>
+      <Text {...style}>{text}</Text>
+    </Box>
+  );
 }

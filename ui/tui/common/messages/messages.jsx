@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import { init } from '../../handler.js';
 import { useSelector } from '../store/index.js';
+import { useBackground, useBorder, useStyle } from '../theme/index.js';
 
 /**
  * @typedef {import('../../../../src/messages.js').Message} Message
@@ -10,8 +11,13 @@ import { useSelector } from '../store/index.js';
 /** @type {Message[]} */
 const NONE = [];
 
-/** @type {{ [level in MessageLevel]: string | undefined }} */
-const COLORS = { error: 'red', warning: 'yellow', info: undefined };
+/**
+ * `<Text>` props for each level, from the color scheme (`core.error`, `core.warning`, `core.info`).
+ * @returns {{ [level in MessageLevel]: import('../theme/theme.jsx').TextStyle }}
+ */
+function useLevels() {
+  return { error: useStyle('core.error'), warning: useStyle('core.warning'), info: useStyle('core.info') };
+}
 
 /** Rows the popup keeps for its border, title, and footer. */
 const POPUP_CHROME = 6;
@@ -54,11 +60,12 @@ export function needsPopup(messages, columns) {
  */
 export function MessageLine({ columns }) {
   const messages = useMessages();
+  const levels = useLevels();
   const message = messages.length && !needsPopup(messages, columns) ? messages[0] : null;
   return (
     <Box height={1} flexShrink={0}>
       {message && (
-        <Text color={COLORS[message.level]} wrap="truncate-end">
+        <Text {...levels[message.level]} wrap="truncate-end">
           {label(message)}
         </Text>
       )}
@@ -75,35 +82,38 @@ export function MessageLine({ columns }) {
  */
 export function MessagePopup({ columns, rows }) {
   const messages = useMessages();
+  const levels = useLevels();
+  const hint = useStyle('core.hint');
+  const background = useBackground();
+  const worst = messages.some((message) => message.level === 'error') ? 'error' : messages.some((message) => message.level === 'warning') ? 'warning' : 'info';
+  const border = useBorder(`core.${worst}`);
   if (!needsPopup(messages, columns)) {
     return null;
   }
   const shown = messages.slice(-Math.max(1, rows - POPUP_CHROME));
   const hidden = messages.length - shown.length;
-  const color = messages.some((message) => message.level === 'error')
-    ? COLORS.error
-    : messages.some((message) => message.level === 'warning') ? COLORS.warning : undefined;
   const title = messages.length === 1 ? capitalize(messages[0].level) : `${messages.length} messages`;
   return (
     <Box position="absolute" width="100%" height="100%" justifyContent="center" alignItems="center">
       <Box
-        backgroundColor="blank"
+        // "blank" isn't a color Ink knows, so it paints with spaces in the terminal's own colors.
+        backgroundColor={background ?? 'blank'}
         borderStyle="round"
-        borderColor={color}
+        {...border}
         flexDirection="column"
         paddingX={1}
         maxWidth={Math.max(20, columns - 4)}
       >
-        <Text bold color={color}>
+        <Text {...levels[worst]} bold>
           {title}
         </Text>
-        {hidden > 0 && <Text dimColor>…{hidden} earlier not shown</Text>}
+        {hidden > 0 && <Text {...hint}>…{hidden} earlier not shown</Text>}
         {shown.map((message) => (
-          <Text key={message.id} color={COLORS[message.level]}>
+          <Text key={message.id} {...levels[message.level]}>
             {label(message)}
           </Text>
         ))}
-        <Text dimColor>Press any key</Text>
+        <Text {...hint}>Press any key</Text>
       </Box>
     </Box>
   );
