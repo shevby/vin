@@ -1,0 +1,22 @@
+{
+  "name": "vin",
+  "version": "0.1.0",
+  "description": "A vifm-inspired terminal file manager with support for network protocols and user extensions.",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "bin": {
+    "vin": "index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "react": "^19.3.0"
+  }
+}
