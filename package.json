@@ -2,6 +2,8 @@
   "name": "vin",
   "version": "0.1.0",
   "description": "A vifm-inspired terminal file manager with support for network protocols and user extensions.",
+  "license": "MIT",
+  "author": "Bohdan Shevchenko",
   "private": true,
   "type": "commonjs",
   "main": "index.js",
