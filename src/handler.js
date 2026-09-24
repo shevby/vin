@@ -205,7 +205,8 @@ class Handler {
   /**
    * Takes the focus within this handler's window, so keys go to it first, then to its ancestors up to the
    * window's handler. If the window is covered, the focus takes effect once the window is on top again.
-   * @throws {Error} If this handler isn't in an open window.
+   * Called from a window's `onInit()` (on a sub-handler), it picks the focus the window opens with.
+   * @throws {Error} If this handler isn't in an open window, or one being opened.
    */
   focus() {
     this.#host('take the focus').windows.focus(this);
@@ -458,6 +459,18 @@ class Handler {
    * @returns {Promise<void> | void}
    */
   onDispose() {}
+
+  /**
+   * Override to take text typed while this handler has the focus — a key that types a character (`j`,
+   * `shift+g` as `G`, `space`), or a paste. It's offered before keybindings, so a text field gets `j`
+   * even where `j` is bound. Keys with Ctrl or Alt, and named keys (`enter`), are never text.
+   * @param {string} text
+   * @returns {boolean} Whether the text was taken; if not, the key goes to keybindings. The base class
+   *   takes none.
+   */
+  onText(text) {
+    return false;
+  }
 }
 
 module.exports = Handler;

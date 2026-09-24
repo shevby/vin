@@ -1,5 +1,5 @@
 const Handler = require('../../handler');
-const { isChord } = require('../../keys');
+const { chordText, isChord } = require('../../keys');
 const { KeySequencer } = require('../../keymap');
 
 /**
@@ -128,8 +128,9 @@ class Core extends Handler {
 
   /**
    * Handles a key press from the UI: clears the messages shown — the user has had them in front of them —
-   * then runs the command the key completes for the focus, or waits for the rest of a sequence. The command
-   * runs in the background; a failure is reported as a message.
+   * then offers the character the key types, if any, to the focused handler (`Handler#onText`, e.g. a text
+   * field); if it doesn't take it, runs the command the key completes for the focus, or waits for the rest
+   * of a sequence. The command runs in the background; a failure is reported as a message.
    * @param {string} chord One canonical chord (`src/keys.js`), e.g. `j`, `shift+g`, `ctrl+w`.
    * @returns {boolean} Whether a keybinding used the key — if not, the UI may handle it itself.
    * @throws {TypeError} If `chord` isn't one canonical chord.
@@ -139,7 +140,45 @@ class Core extends Handler {
       throw new TypeError(`"${chord}" isn't a single key in canonical notation, e.g. "j", "shift+g", "ctrl+w"`);
     }
     this.#messages.clear();
+    const text = chordText(chord);
+    if (text !== null && this.#offerText(text)) {
+      this.#keys.reset();
+      return true;
+    }
     return this.#keys.press(chord, this.#windows.focused?.path ?? null);
+  }
+
+  /**
+   * Handles text that came as a whole — a paste — by offering it to the focused handler
+   * (`Handler#onText`), as if typed.
+   * @param {string} text
+   * @returns {boolean} Whether the focused handler took it.
+   * @throws {TypeError} If `text` isn't a non-empty string.
+   */
+  type(text) {
+    if (typeof text !== 'string' || !text) {
+      throw new TypeError('Typed text must be a non-empty string');
+    }
+    this.#messages.clear();
+    this.#keys.reset();
+    return this.#offerText(text);
+  }
+
+  /**
+   * @param {string} text
+   * @returns {boolean} Whether the focused handler took it; a failure counts as taken, and is reported.
+   */
+  #offerText(text) {
+    const focused = this.#windows.focused;
+    if (!focused) {
+      return false;
+    }
+    try {
+      return focused.onText(text) === true;
+    } catch (error) {
+      this.#messages.report(error, `Typing into "${focused.path}" failed`);
+      return true;
+    }
   }
 
   /**

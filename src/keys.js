@@ -86,4 +86,20 @@ function isChord(chord) {
   }
 }
 
-module.exports = { parseKeys, isChord, NAMED_KEYS };
+/**
+ * The text a chord types, if it types any: `j` → `j`, `shift+g` → `G`, `:` → `:`, `space` → ` `.
+ * @param {string} chord A canonical chord.
+ * @returns {string | null} `null` for a named key (`enter`, `left`) or a chord with Ctrl or Alt.
+ */
+function chordText(chord) {
+  if (chord === 'space' || chord === 'shift+space') {
+    return ' ';
+  }
+  const match = /^(shift\+)?(.+)$/su.exec(chord);
+  if (!match || [...match[2]].length !== 1) {
+    return null;
+  }
+  return match[1] ? match[2].toUpperCase() : match[2];
+}
+
+module.exports = { parseKeys, isChord, chordText, NAMED_KEYS };

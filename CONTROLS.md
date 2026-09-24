@@ -22,3 +22,14 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - `Escape` closes the window on top (a dialog, a menu), never the main window.
 - A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
 - Everything else: TBD, added as it's built and tried out.
+
+## Dialogs
+
+Escape dismisses any dialog.
+
+- **Confirm** — `y` / `n` answer at once; `Left`/`Right`, `h`/`l`, and `Tab` move between the buttons; `Enter` presses the highlighted one (a destructive question starts on No).
+- **Choice list** — `j`/`k` or the arrows (`ctrl+n`/`ctrl+p`) move; `g g`/`shift+g` or `Home`/`End` jump to the ends; `Enter` picks; an option's own key (shown before it) picks it at once.
+- **Text input** — typed characters and pastes go into the text, even keys bound elsewhere (`j`). `Enter` submits. Editing, readline-style:
+  - `Left`/`ctrl+b`, `Right`/`ctrl+f` — a character; `ctrl+Left`/`alt+b`, `ctrl+Right`/`alt+f` — a word (letters and digits, so `.` and `/` end one).
+  - `Home`/`ctrl+a`, `End`/`ctrl+e` — to the start or end.
+  - `Backspace`, `Delete`/`ctrl+d` — a character; `ctrl+w`/`alt+Backspace`, `alt+d` — a word; `ctrl+u`, `ctrl+k` — to the start or end.
