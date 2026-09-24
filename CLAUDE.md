@@ -2,8 +2,9 @@
 
 A vifm-inspired terminal file manager with support for network protocols and user extensions.
 
-## Proposals
+## Working Together
 
+- Don't hesitate to ask questions — when a requirement is ambiguous, a decision is really the user's to make (scope, UX, naming, trade-offs), or a wrong assumption would be costly to undo, ask instead of guessing. Pure implementation details with a sensible default don't need a question; pick one and mention it.
 - Don't hesitate to add new TODO items or suggestions whenever something worth tracking comes up — no need to ask first — but mark them so they're easy to review:
   - **TODO item** — append *(proposed)* until accepted.
   - **Suggestion** — a numbered blockquote (`> **Suggestion N:** …`) in the section it concerns, using the next unused number, and backed by investigation (docs, prior art), not guesses.
