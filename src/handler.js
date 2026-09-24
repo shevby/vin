@@ -1,3 +1,10 @@
+const { Model } = require('./state');
+
+/**
+ * @typedef {import('./state').StateObject} StateObject
+ * @typedef {import('./state').StateListener} StateListener
+ */
+
 /** A letter, then letters, digits, `-` or `_` — no dots, since dots separate path segments. */
 const NAME_PATTERN = /^[A-Za-z][\w-]*$/;
 
@@ -11,8 +18,14 @@ const NAME_PATTERN = /^[A-Za-z][\w-]*$/;
  *
  * Lifecycle: `init()` runs `onInit()` and then initializes sub-handlers in the order they were added;
  * `dispose()` disposes sub-handlers in reverse order and then runs `onDispose()`. Both are idempotent.
+ *
+ * State: `this.update(state)` replaces the window's whole state and registers its top-level properties;
+ * `this.state.a.b = …` edits one property. Either way the UI's copy follows automatically.
+ * Type a subclass's state with `@extends {Handler<{ cwd: string }>}`.
+ * @template {StateObject} [S=StateObject]
  */
 class Handler {
+  #model = new Model();
   /** @type {Handler | null} */
   #parent = null;
   /** @type {Map<string, Handler>} */
@@ -53,6 +66,35 @@ class Handler {
    */
   get path() {
     return this.#parent ? `${this.#parent.path}.${this.name}` : this.name;
+  }
+
+  /**
+   * The window's live state. Assigning, deleting, and array methods like `push` are sent to the UI, batched
+   * per tick. Top-level properties must first be registered by `update()`; nested objects take new keys
+   * freely. Only JSON data is allowed.
+   * @returns {S}
+   */
+  get state() {
+    return /** @type {S} */ (this.#model.state);
+  }
+
+  /**
+   * Replaces the window's whole state and registers its top-level properties.
+   * @param {S} state JSON data; it's copied, so later changes to the argument don't affect the state.
+   * @throws {TypeError} If `state` isn't a plain object of JSON data.
+   */
+  update(state) {
+    this.#model.replace(state);
+  }
+
+  /**
+   * Follows this handler's state: `listener` gets the current state at once, then one message per tick
+   * with any changes. Subscriptions end when the handler is disposed.
+   * @param {StateListener} listener
+   * @returns {() => void} Unsubscribes.
+   */
+  subscribeState(listener) {
+    return this.#model.subscribe(listener);
   }
 
   /**
@@ -218,6 +260,8 @@ class Handler {
         .then(() => this.onDispose())
         .catch((error) => errors.push(error));
     }
+    this.#model.flush();
+    this.#model.clear();
     if (errors.length === 1) {
       throw errors[0];
     }
