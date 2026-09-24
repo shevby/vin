@@ -47,14 +47,21 @@ async function setup() {
   return vin;
 }
 
+/**
+ * A point's items, leaving out the built-in `core` handler's own.
+ * @param {InstanceType<typeof Vin>} vin
+ * @param {string} point
+ */
+const contributed = (vin, point) => vin.registry.get(point).filter((item) => item.source !== 'core');
+
 test('a class contributes once for all its instances, normalized, until the last one is disposed', async () => {
   const vin = await setup();
-  assert.deepEqual(vin.registry.get('commands').map((c) => c.id), ['main.swap', 'pane.down', 'pane.info']);
+  assert.deepEqual(contributed(vin, 'commands').map((c) => c.id), ['main.swap', 'pane.down', 'pane.info']);
   assert.deepEqual(vin.registry.command('pane.info'), {
     id: 'pane.info', kind: 'pane', method: 'info', title: 'Info', description: 'Where the pane is',
     tui: true, cli: true, source: 'pane',
   });
-  assert.deepEqual(vin.registry.get('keybindings'), [
+  assert.deepEqual(contributed(vin, 'keybindings'), [
     { key: 'j', keys: ['j'], command: 'pane.down', args: [], mode: 'normal', source: 'pane', user: false },
   ]);
   assert.deepEqual(vin.registry.get('contextMenu'), [
@@ -67,7 +74,7 @@ test('a class contributes once for all its instances, normalized, until the last
   assert.equal(vin.registry.command('pane.down')?.id, 'pane.down', 'right is still there');
   await main.remove('right');
   assert.equal(vin.registry.command('pane.down'), undefined);
-  assert.deepEqual(vin.registry.get('keybindings'), []);
+  assert.deepEqual(contributed(vin, 'keybindings'), []);
 });
 
 test('a command runs on the focused instance of its kind, or the only one', async () => {
@@ -91,8 +98,10 @@ test('the core handler mirrors the registry and runs commands for the UI', async
     assert.equal(message.type, 'replace');
     state = message.state;
   });
-  assert.deepEqual(state.contributions.commands.map((/** @type {any} */ c) => c.id), ['main.swap', 'pane.down', 'pane.info']);
-  assert.equal(await transport.call('core.execute', ['pane.down', 'main.left', []]), 'main.left down');
+  assert.deepEqual(state.contributions.commands.map((/** @type {any} */ c) => c.id), ['core.closeWindow', 'main.swap', 'pane.down', 'pane.info']);
+  await vin.openWindow('main');
+  vin.resolve('main.left').focus();
+  assert.equal(await transport.call('core.execute', ['pane.down']), 'main.left down', 'on the focus');
 });
 
 test('contributions are checked, with the source and item in the error, and nothing half-registered', async () => {
@@ -108,8 +117,8 @@ test('contributions are checked, with the source and item in the error, and noth
     const vin = new Vin();
     vin.register(new Bad('bad'));
     await assert.rejects(vin.init(), message);
-    assert.deepEqual(vin.registry.get('commands'), [], 'nothing left behind');
-    assert.deepEqual(vin.registry.get('keybindings'), []);
+    assert.deepEqual(contributed(vin, 'commands'), [], 'nothing left behind');
+    assert.deepEqual(contributed(vin, 'keybindings'), []);
   };
   await rejects({ commands: [{ method: 'down' }] }, /commands\[0\] from "bad" needs "title"/);
   await rejects({ commands: [{ method: 'down', title: 'x', titel: 'y' }] }, /unknown field "titel"/);

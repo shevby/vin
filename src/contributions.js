@@ -305,17 +305,23 @@ class Registry {
 
   /**
    * The keybindings active for `focus`, with the handler each would run on and how near the focus it is.
-   * The focus chain is the focused handler, its ancestors, and last `core`, so `core.*` bindings are
-   * global. A binding is active if a handler of its command's kind is on the chain and in the binding's
-   * mode; bindings of commands that don't exist or aren't enabled for the TUI are skipped.
+   * The focus chain is the focused handler, its ancestors up to the window it's in, and last `core`, so
+   * `core.*` bindings are global and the windows an overlay covers get no keys. A binding is active if a
+   * handler of its command's kind is on the chain and in the binding's mode; bindings of commands that
+   * don't exist or aren't enabled for the TUI are skipped.
    * @param {string | null} focus Path of the focused handler.
+   * @param {string | null} [window] Path of the window's handler — `focus` or an ancestor. Default: the
+   *   top-level handler.
    * @returns {{ binding: Keybinding, command: Command, handler: AnyHandler, depth: number }[]}
    */
-  activeKeybindings(focus) {
+  activeKeybindings(focus, window = null) {
     /** @type {string[]} */
     const chain = [];
     for (let path = focus ?? ''; path; path = path.slice(0, Math.max(0, path.lastIndexOf('.')))) {
       chain.push(path);
+      if (path === window) {
+        break;
+      }
     }
     chain.push('core');
 

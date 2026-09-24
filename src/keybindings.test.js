@@ -74,15 +74,18 @@ async function setup() {
   const vin = new Vin();
   vin.register(new Main());
   await vin.init();
+  await vin.openWindow('main');
   /**
+   * Focuses a handler of the main window, then presses keys.
    * @param {string} chords
-   * @param {string | null} focus
+   * @param {string} focus
    */
   const press = async (chords, focus) => {
+    vin.resolve(focus).focus();
     /** @type {unknown[]} */
     const used = [];
     for (const chord of chords.split(' ')) {
-      used.push(await vin.call('core.press', chord, focus));
+      used.push(await vin.call('core.press', chord));
     }
     await tick();
     return used;
@@ -96,7 +99,15 @@ test('a key runs its command on the focused window, shadowing bindings around it
   await press('tab', 'main.right');
   await press('j', 'main');
   assert.deepEqual(calls, ['main.right down', 'swap', 'main down']);
-  assert.deepEqual(await press('j', null), [false], 'nothing focused: no main or pane bindings');
+});
+
+test('with no window open, only core bindings apply', async () => {
+  calls = [];
+  const vin = new Vin();
+  vin.register(new Main());
+  await vin.init();
+  assert.equal(await vin.call('core.press', 'j'), false);
+  assert.equal(await vin.call('core.press', 'escape'), true);
 });
 
 test('sequences show their pending keys in core state', async () => {
@@ -140,7 +151,7 @@ test('user config adds bindings after the defaults and removes them with -comman
   );
   assert.deepEqual(
     vin.registry.get('keybindings').map((b) => `${b.key} ${b.command}`),
-    ['tab main.swap', 'j main.down', 'v pane.visual', 'j pane.mark', 'shift+j pane.down', 'ctrl+w w main.swap'],
+    ['escape core.closeWindow', 'tab main.swap', 'j main.down', 'v pane.visual', 'j pane.mark', 'shift+j pane.down', 'ctrl+w w main.swap'],
   );
   await press('shift+j', 'main.left');
   await press('j', 'main.left');
@@ -159,5 +170,5 @@ test('only user config can remove bindings, and chords must be canonical', async
     () => vin.registry.contribute('keybindings', [{ key: 'ctrl', command: 'pane.down' }], { source: 'plugin' }),
     /keybindings\[0\] from "plugin": Key "ctrl": "ctrl" needs a key after it/,
   );
-  await assert.rejects(vin.call('core.press', 'G', 'main.left'), /isn't a single key in canonical notation/);
+  await assert.rejects(vin.call('core.press', 'G'), /isn't a single key in canonical notation/);
 });

@@ -12,7 +12,8 @@ import { connect, disconnect } from './handler.js';
 export async function start(transport) {
   connect(transport);
   try {
-    const { waitUntilExit } = render(<App />);
+    // The alternate screen, like vim and vifm: the shell's scrollback is left as it was on exit.
+    const { waitUntilExit } = render(<App />, { alternateScreen: true });
     await waitUntilExit();
   } finally {
     disconnect();

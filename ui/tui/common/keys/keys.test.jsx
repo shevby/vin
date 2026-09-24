@@ -57,11 +57,12 @@ test('useKeybindings sends key presses to the backend', async (t) => {
   const vin = new Vin();
   vin.register(new Pane('pane'));
   await vin.init();
+  await vin.openWindow('pane');
   connect(createInProcessTransport(vin));
   t.after(disconnect);
 
   const Window = () => {
-    useKeybindings('pane');
+    useKeybindings();
     return <Text>pane</Text>;
   };
   const { stdin, unmount } = render(<Window />);
@@ -77,7 +78,7 @@ test('useKeybindings stays inactive when stdin is not a terminal', async () => {
   const stdin = new PassThrough();
   const stdout = Object.assign(new PassThrough(), { columns: 80, rows: 24 });
   const Window = () => {
-    useKeybindings(null);
+    useKeybindings();
     return <Text>piped</Text>;
   };
   const instance = renderInk(<Window />, {

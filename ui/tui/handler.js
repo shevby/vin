@@ -48,6 +48,21 @@ export function disconnect() {
 }
 
 /**
+ * Stops following the state of a handler and of everything under it (`main.left.confirm` and
+ * `main.left.confirm.*`) and drops their stores — for a window that closed, whose handlers are gone. A
+ * handler opened again at the same path gets a fresh store the next time `store` is read.
+ * @param {string} path
+ */
+export function release(path) {
+  for (const [key, connection] of connections) {
+    if (key === path || key.startsWith(`${path}.`)) {
+      connection.unsubscribe();
+      connections.delete(key);
+    }
+  }
+}
+
+/**
  * The handle for a backend handler, by its full dotted path (`main`, `main.left`). Handles are cheap and
  * cached, so calling `init()` at module level or in a component is fine; nothing reaches the backend until
  * a method is called or `store` is read.
@@ -105,8 +120,8 @@ function connected() {
 }
 
 /**
- * The store mirroring a handler's state, following it from the first time it's asked for until
- * `disconnect()`.
+ * The store mirroring a handler's state, following it from the first time it's asked for until `release()`
+ * or `disconnect()`.
  * @param {string} path
  * @returns {Store}
  */
