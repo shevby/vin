@@ -1,4 +1,5 @@
 const Handler = require('./handler');
+const { parseKeys } = require('./keys');
 const { isName, isPath } = require('./names');
 const { cloneData, deepFreeze } = require('./state');
 
@@ -30,20 +31,28 @@ const { cloneData, deepFreeze } = require('./state');
  */
 
 /**
+ * A keybinding. It's active while a handler of its command's kind is focused (or is an ancestor of the
+ * focused one) and in `mode`; the nearest such handler wins over those around it, and runs the command.
+ *
+ * User config (`{ user: true }` contributions) may also remove bindings: `command: '-pane.down'` removes
+ * every binding of `pane.down`, or only the one on `key` if given. User bindings apply after all others.
  * @typedef {object} KeybindingContribution
- * @property {string} key
+ * @property {string} key VS Code-style notation (`src/keys.js`): `j`, `shift+g`, `g g`, `ctrl+w h`.
  * @property {string} command A command id, e.g. `pane.down`.
  * @property {Data[]} [args] Passed to the command's method.
- * @property {string} [mode] The window mode it applies in. Default `normal`.
+ * @property {string} [mode] The window mode it applies in — the target handler's `state.mode`, or `normal`
+ *   if it has none. Default `normal`.
  */
 
 /**
  * @typedef {object} Keybinding
- * @property {string} key
+ * @property {string} key Canonical notation.
+ * @property {string[]} keys Its chords.
  * @property {string} command
  * @property {Data[]} args
  * @property {string} mode
  * @property {string} source
+ * @property {boolean} user From user config.
  */
 
 /**
@@ -75,12 +84,19 @@ const { cloneData, deepFreeze } = require('./state');
  * @typedef {object} ContributionContext
  * @property {string} source Who contributes: a handler kind (later, also a plugin name).
  * @property {AnyHandler} [handler] An instance of that kind, when it's a handler, to check items against.
+ * @property {boolean} [user] The user's own config: applied after everything else, and may remove items.
  */
 
 /**
  * Checks one raw item and returns it normalized — JSON data, with every optional field filled in. An item
  * with an `id` must have one unique within its point.
  * @typedef {(item: unknown, context: ContributionContext, where: string) => { [key: string]: Data }} Normalize
+ */
+
+/**
+ * Turns a point's normalized items, in order (user config last), into what `get()` returns — e.g. applying
+ * user removals.
+ * @typedef {(items: { [key: string]: Data }[]) => { [key: string]: Data }[]} Compose
  */
 
 /**
@@ -93,9 +109,9 @@ const { cloneData, deepFreeze } = require('./state');
  * that kind — the focused one, when there are several.
  */
 class Registry {
-  /** @type {Map<string, Normalize>} */
+  /** @type {Map<string, { normalize: Normalize, compose: Compose | null }>} */
   #points = new Map();
-  /** @type {Map<string, { source: string, items: { [key: string]: Data }[] }[]>} */
+  /** @type {Map<string, { source: string, user: boolean, items: { [key: string]: Data }[] }[]>} */
   #records = new Map();
   /** @type {Map<string, { type: Function, instances: Set<AnyHandler>, release: () => void }>} */
   #kinds = new Map();
@@ -104,7 +120,7 @@ class Registry {
 
   constructor() {
     this.definePoint('commands', normalizeCommand);
-    this.definePoint('keybindings', normalizeKeybinding);
+    this.definePoint('keybindings', normalizeKeybinding, composeKeybindings);
     this.definePoint('contextMenu', normalizeMenuEntry);
   }
 
@@ -120,16 +136,17 @@ class Registry {
    * Adds an extension point.
    * @param {string} name
    * @param {Normalize} normalize
+   * @param {Compose} [compose]
    * @throws {Error} If `name` isn't a name or is taken.
    */
-  definePoint(name, normalize) {
+  definePoint(name, normalize, compose) {
     if (!isName(name)) {
       throw new TypeError(`Invalid extension point name "${name}"`);
     }
     if (this.#points.has(name)) {
       throw new Error(`Extension point "${name}" is already defined`);
     }
-    this.#points.set(name, normalize);
+    this.#points.set(name, { normalize, compose: compose ?? null });
     this.#records.set(name, []);
     this.#notify(name);
   }
@@ -144,7 +161,7 @@ class Registry {
    * @throws {Error} If the point doesn't exist, or an item is invalid or reuses an id — nothing is added then.
    */
   contribute(point, items, context) {
-    const normalize = this.#points.get(point);
+    const normalize = this.#points.get(point)?.normalize;
     const records = this.#records.get(point);
     if (!normalize || !records) {
       throw new Error(
@@ -170,7 +187,7 @@ class Registry {
       ids.set(item.id, context.source);
     }
 
-    const record = { source: context.source, items: normalized };
+    const record = { source: context.source, user: Boolean(context.user), items: normalized };
     records.push(record);
     this.#notify(point);
     let released = false;
@@ -184,7 +201,7 @@ class Registry {
   }
 
   /**
-   * Every item of a point, in the order they were contributed. Items are frozen.
+   * Every item of a point, in the order they were contributed, user config last. Items are frozen.
    * @param {string} point
    * @returns {{ [key: string]: Data }[]}
    * @throws {Error} If the point doesn't exist.
@@ -194,7 +211,11 @@ class Registry {
     if (!records) {
       throw new Error(`Unknown extension point "${point}"`);
     }
-    return records.flatMap((record) => record.items);
+    const items = [
+      ...records.filter((record) => !record.user).flatMap((record) => record.items),
+      ...records.filter((record) => record.user).flatMap((record) => record.items),
+    ];
+    return this.#points.get(point)?.compose?.(items) ?? items;
   }
 
   /**
@@ -280,6 +301,42 @@ class Registry {
         ? `Command "${id}" needs a focused "${command.kind}"; there are ${instances.length}: ${instances.map((h) => h.path).join(', ')}`
         : `Command "${id}" has no "${command.kind}" to run on`,
     );
+  }
+
+  /**
+   * The keybindings active for `focus`, with the handler each would run on and how near the focus it is.
+   * The focus chain is the focused handler, its ancestors, and last `core`, so `core.*` bindings are
+   * global. A binding is active if a handler of its command's kind is on the chain and in the binding's
+   * mode; bindings of commands that don't exist or aren't enabled for the TUI are skipped.
+   * @param {string | null} focus Path of the focused handler.
+   * @returns {{ binding: Keybinding, command: Command, handler: AnyHandler, depth: number }[]}
+   */
+  activeKeybindings(focus) {
+    /** @type {string[]} */
+    const chain = [];
+    for (let path = focus ?? ''; path; path = path.slice(0, Math.max(0, path.lastIndexOf('.')))) {
+      chain.push(path);
+    }
+    chain.push('core');
+
+    const result = [];
+    for (const binding of /** @type {Keybinding[]} */ (/** @type {unknown} */ (this.get('keybindings')))) {
+      const command = this.command(binding.command);
+      if (!command?.tui) {
+        continue;
+      }
+      const instances = this.instances(command.kind);
+      const index = chain.findIndex((path) => instances.some((instance) => instance.path === path));
+      if (index < 0) {
+        continue;
+      }
+      const handler = /** @type {AnyHandler} */ (instances.find((instance) => instance.path === chain[index]));
+      const mode = /** @type {{ mode?: unknown }} */ (handler.state).mode;
+      if ((typeof mode === 'string' ? mode : 'normal') === binding.mode) {
+        result.push({ binding, command, handler, depth: chain.length - index });
+      }
+    }
+    return result;
   }
 
   /**
@@ -418,21 +475,51 @@ function normalizeCommand(item, { source, handler }, where) {
 }
 
 /** @type {Normalize} */
-function normalizeKeybinding(item, { source }, where) {
+function normalizeKeybinding(item, { source, user = false }, where) {
   const read = fields(item, where);
-  const key = read.get('key', 'string');
+  /** @type {string} */
   const command = read.get('command', 'string');
+  const removal = command.startsWith('-');
+  /** @type {string | null} */
+  const key = read.get('key', 'string', ...(removal ? [null] : []));
   const args = read.get('args', 'array', []);
   const mode = read.get('mode', 'string', 'normal');
   read.done();
-  if (!key) {
-    throw new TypeError(`${where}: "key" is empty`);
+  if (removal && !user) {
+    throw new TypeError(`${where}: only user config can remove keybindings ("${command}")`);
   }
-  checkCommandId(command, where);
+  checkCommandId(removal ? command.slice(1) : command, where);
   if (!isName(mode)) {
     throw new TypeError(`${where}: invalid mode "${mode}"`);
   }
-  return { key, command, args, mode, source };
+  /** @type {string[]} */
+  let keys = [];
+  if (key !== null) {
+    try {
+      keys = parseKeys(key);
+    } catch (error) {
+      throw new TypeError(`${where}: ${/** @type {Error} */ (error).message}`);
+    }
+  }
+  return { key: key === null ? null : keys.join(' '), keys, command, args, mode, source, user };
+}
+
+/**
+ * Applies user removals (`-pane.down`) in order, dropping them from the result.
+ * @type {Compose}
+ */
+function composeKeybindings(items) {
+  /** @type {{ [key: string]: Data }[]} */
+  let result = [];
+  for (const item of items) {
+    const { command, key } = /** @type {{ command: string, key: string | null }} */ (item);
+    if (command.startsWith('-')) {
+      result = result.filter((binding) => binding.command !== command.slice(1) || (key !== null && binding.key !== key));
+    } else {
+      result.push(item);
+    }
+  }
+  return result;
 }
 
 /** @type {Normalize} */

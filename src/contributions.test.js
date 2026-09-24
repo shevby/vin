@@ -54,7 +54,9 @@ test('a class contributes once for all its instances, normalized, until the last
     id: 'pane.info', kind: 'pane', method: 'info', title: 'Info', description: 'Where the pane is',
     tui: true, cli: true, source: 'pane',
   });
-  assert.deepEqual(vin.registry.get('keybindings'), [{ key: 'j', command: 'pane.down', args: [], mode: 'normal', source: 'pane' }]);
+  assert.deepEqual(vin.registry.get('keybindings'), [
+    { key: 'j', keys: ['j'], command: 'pane.down', args: [], mode: 'normal', source: 'pane', user: false },
+  ]);
   assert.deepEqual(vin.registry.get('contextMenu'), [
     { command: 'pane.info', title: null, group: 'details', order: 0, args: [], source: 'pane' },
   ]);
