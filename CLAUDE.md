@@ -129,7 +129,7 @@ Keybindings live in [CONTROLS.md](CONTROLS.md), kept separate since they're not 
 
 - Local only — no `git push`.
 - A separate branch per feature/fix.
-- Run `npm run check` (typecheck + build + tests) before merging into `master`.
+- Run `npm run check` (typecheck + build + tests) before merging into `master`. Once it passes, merge a finished branch (`git merge --no-ff`) without asking — ask only when unsure.
 - A bug fix should add a test covering the regression it fixes, when that's reasonable and doesn't take too long — not a hard requirement.
 - Never delete branches or squash commits.
 
