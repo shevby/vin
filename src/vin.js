@@ -1,5 +1,6 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { Config, CONFIG_FILE } = require('./config');
 const { Registry } = require('./contributions');
 const { EventBus } = require('./events');
 const Handler = require('./handler');
@@ -18,7 +19,14 @@ class Vin {
   /** @type {import('./host').Host} */
   #host;
 
-  constructor() {
+  /**
+   * @param {object} [options]
+   * @param {string} [options.configFile] The user's config file, read by `start()`. Default: `config.json5`
+   *   next to the application.
+   */
+  constructor({ configFile = CONFIG_FILE } = {}) {
+    /** @readonly */
+    this.configFile = configFile;
     /**
      * Top-level handlers by name, in registration order.
      * @type {Map<string, Handler>}
@@ -39,9 +47,15 @@ class Vin {
      * @readonly
      */
     this.windows = new WindowStack();
+    /**
+     * The user's configuration; handlers read it as `this.config`.
+     * @readonly
+     */
+    this.config = new Config(this.registry);
     this.#host = {
       events: this.events,
       windows: this.windows,
+      config: this.config.reader,
       attach: (handler) => {
         const detach = this.registry.attach(handler);
         return () => {
@@ -157,14 +171,21 @@ class Vin {
   }
 
   /**
-   * Initializes the handlers, loads the built TUI (`npm run build`) and runs it until it exits, then
-   * disposes the handlers.
+   * Loads the config file, initializes the handlers, and checks the config against the options they declare
+   * (creating the file, listing them, if there's none); then loads the built TUI (`npm run build`) and runs
+   * it until it exits, and disposes the handlers.
    * @returns {Promise<void>}
+   * @throws {import('./config').ConfigError} If the config file has mistakes — before the UI starts.
    */
   async start() {
     let failed = true;
     try {
+      const exists = this.config.load(this.configFile);
       await this.init();
+      if (!exists) {
+        this.config.create(this.configFile);
+      }
+      this.config.check();
       // The UI is ESM (Ink can't be require()d), so this is the one dynamic import across the boundary.
       const entry = pathToFileURL(path.join(__dirname, '..', 'dist', 'tui.mjs')).href;
       /** @type {{ start(transport: import('./transport').Transport): Promise<void> }} */

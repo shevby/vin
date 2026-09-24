@@ -23,9 +23,19 @@ const { log } = require('../../log');
 class Core extends Handler {
   static kind = 'core';
 
+  /** @type {import('../../contributions').Contributes} */
   static contributes = {
     commands: [{ method: 'closeWindow', title: 'Close window', description: 'Closes the window on top, unless it is the main window' }],
     keybindings: [{ key: 'escape', command: 'core.closeWindow' }],
+    configuration: [
+      {
+        key: 'keyTimeout',
+        type: 'integer',
+        default: 1000,
+        minimum: 0,
+        description: 'How long a key sequence (g g) waits for its next key, in ms.',
+      },
+    ],
   };
 
   /** @type {Registry} */
@@ -63,6 +73,7 @@ class Core extends Handler {
   }
 
   onInit() {
+    this.#keys.timeout = /** @type {number} */ (this.config.get('core.keyTimeout'));
     const registry = this.#registry;
     const windows = this.#windows;
     this.update({

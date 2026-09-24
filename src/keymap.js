@@ -19,7 +19,6 @@
 class KeySequencer {
   /** @type {(focus: string | null) => Candidate[]} */
   #candidates;
-  #timeout;
   /** @type {(pending: readonly string[]) => void} */
   #onPending;
   /** @type {string[]} */
@@ -40,7 +39,8 @@ class KeySequencer {
    */
   constructor({ candidates, timeout = 1000, onPending = () => {} }) {
     this.#candidates = candidates;
-    this.#timeout = timeout;
+    /** How long to wait for the rest of a sequence, in ms; takes effect from the next key. */
+    this.timeout = timeout;
     this.#onPending = onPending;
   }
 
@@ -82,7 +82,7 @@ class KeySequencer {
       this.#timer = null;
       this.#setPending([]);
       complete?.run();
-    }, this.#timeout);
+    }, this.timeout);
     this.#timer.unref?.();
     return true;
   }

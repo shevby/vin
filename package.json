@@ -21,6 +21,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@humanwhocodes/momoa": "^3.3.13",
     "ink": "^7.1.1",
     "react": "^19.3.0"
   },
