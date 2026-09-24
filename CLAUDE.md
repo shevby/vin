@@ -2,6 +2,13 @@
 
 A vifm-inspired terminal file manager with support for network protocols and user extensions.
 
+## Proposals
+
+- Don't hesitate to add new TODO items or suggestions whenever something worth tracking comes up — no need to ask first — but mark them so they're easy to review:
+  - **TODO item** — append *(proposed)* until accepted.
+  - **Suggestion** — a numbered blockquote (`> **Suggestion N:** …`) in the section it concerns, using the next unused number, and backed by investigation (docs, prior art), not guesses.
+- Once accepted, fold it into plain text (drop the *(proposed)* mark or the blockquote); once rejected, delete it. Never renumber the remaining ones.
+
 ## Tech Stack
 
 1. **Node.js 24 LTS** — plain JavaScript, no TypeScript.
