@@ -222,6 +222,15 @@ class Handler {
   }
 
   /**
+   * Files, on any protocol, by URI: `await this.fs.readDirectory(paths.toUri('C:\\Users'))` (`src/fs/`).
+   * @returns {InstanceType<typeof import('./fs/file-system').FileSystem>}
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
+   */
+  get fs() {
+    return this.#host('access files').fs;
+  }
+
+  /**
    * @param {string} action For the error message.
    * @returns {import('./host').Host}
    */

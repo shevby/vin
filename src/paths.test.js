@@ -143,6 +143,24 @@ test('parent, basename and join stop at roots and take one name', () => {
   assert.throws(() => unix.join('/', 'a/b'), /must be one name/);
 });
 
+test('converts paths to file: URIs and back', () => {
+  /** @type {[InstanceType<typeof Paths>, string, string][]} */
+  const cases = [
+    [windows, 'C:\\', 'file:///C:/'],
+    [windows, 'C:\\Program Files\\a#b%c', 'file:///C:/Program%20Files/a%23b%25c'],
+    [windows, '\\\\server\\share\\x', 'file://server/share/x'],
+    [unix, '/', 'file:///'],
+    [unix, '/srv/a\\b c', 'file:///srv/a%5Cb%20c'],
+  ];
+  for (const [rules, path, uri] of cases) {
+    assert.equal(rules.toUri(path), uri, path);
+    assert.equal(rules.fromUri(uri), path, uri);
+  }
+  assert.equal(windows.fromUri('file:///c:/x/'), 'C:\\x', 'normalized as resolve() does');
+  assert.throws(() => windows.fromUri('sftp://host/x'), /Invalid path "sftp:\/\/host\/x": it isn't a file: URI/);
+  assert.throws(() => unix.fromUri('file://host/x'), (error) => error instanceof PathError);
+});
+
 test('equals ignores case on Windows only', () => {
   assert.ok(windows.equals('C:\\Users', 'c:\\USERS'));
   assert.ok(!unix.equals('/Users', '/users'));

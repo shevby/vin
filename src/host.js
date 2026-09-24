@@ -12,6 +12,7 @@
  * @property {EventBus} events
  * @property {WindowStack} windows
  * @property {ConfigReader} config
+ * @property {InstanceType<typeof import('./fs/file-system').FileSystem>} fs
  * @property {(handler: Handler) => () => void} attach Called when a handler of the tree is initialized; returns
  *   what to call when it is disposed.
  */

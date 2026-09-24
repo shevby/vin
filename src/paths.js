@@ -1,5 +1,6 @@
 const os = require('node:os');
 const nodePath = require('node:path');
+const { fileURLToPath, pathToFileURL } = require('node:url');
 
 /**
  * Local paths: reading what the user types or pastes, and showing paths back.
@@ -191,6 +192,39 @@ class Paths {
       return `/${letter.toLowerCase()}${rest ? `/${this.#slashes(rest)}` : ''}`;
     }
     return this.#slashes(path).replace(/(.)\/$/, '$1');
+  }
+
+  /**
+   * The `file:` URI of a path — how the file system (`src/fs/`) addresses it: `file:///C:/a%20b`,
+   * `file://server/share/x`, `file:///home/me/x`.
+   * @param {string} path As `resolve()` returns it.
+   * @returns {string}
+   */
+  toUri(path) {
+    if (path === '/' && !this.#windows) {
+      // Node 24 on Windows gives `file:////` for it.
+      return 'file:///';
+    }
+    return pathToFileURL(path, { windows: this.#windows }).href;
+  }
+
+  /**
+   * The path of a `file:` URI, as `resolve()` would return it.
+   * @param {string} uri
+   * @returns {string}
+   * @throws {PathError} If `uri` isn't a `file:` URI of an absolute path on this OS.
+   */
+  fromUri(uri) {
+    if (typeof uri !== 'string' || !/^file:/i.test(uri)) {
+      throw new PathError(String(uri), "it isn't a file: URI");
+    }
+    let path;
+    try {
+      path = fileURLToPath(uri, { windows: this.#windows });
+    } catch (error) {
+      throw new PathError(uri, /** @type {Error} */ (error).message);
+    }
+    return this.resolve(path);
   }
 
   /**

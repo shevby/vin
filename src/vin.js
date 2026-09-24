@@ -3,6 +3,8 @@ const { pathToFileURL } = require('node:url');
 const { Config, CONFIG_FILE } = require('./config');
 const { Registry } = require('./contributions');
 const { EventBus } = require('./events');
+const { FileSystem } = require('./fs/file-system');
+const { LocalProvider } = require('./fs/local');
 const Handler = require('./handler');
 const Core = require('./handlers/core/core');
 const { setHost } = require('./host');
@@ -52,10 +54,17 @@ class Vin {
      * @readonly
      */
     this.config = new Config(this.registry);
+    /**
+     * Files by URI, each scheme through its provider — `file:` is the local disk; handlers use it as `this.fs`.
+     * @readonly
+     */
+    this.fs = new FileSystem();
+    this.fs.register('file', new LocalProvider());
     this.#host = {
       events: this.events,
       windows: this.windows,
       config: this.config.reader,
+      fs: this.fs,
       attach: (handler) => {
         const detach = this.registry.attach(handler);
         return () => {
