@@ -28,6 +28,8 @@ const { paths } = require('../paths');
  * @property {number} [mode] Unix permission bits and file type, where the protocol has them.
  * @property {boolean} executable Whether it's a program or script to run: on Unix, a file with an execute
  *   bit; on Windows, one named `.exe`, `.com`, `.bat`, `.cmd`, or `.ps1`.
+ * @property {number} [free] For a root — a drive, a share, `/` — the bytes free on it, where the protocol
+ *   can tell.
  */
 
 /**
@@ -109,7 +111,8 @@ function childUri(uri, name) {
 /**
  * The directory containing a resource, and the resource's name in it: `parentUri('file:///C:/a/b%20c')` is
  * `{ uri: 'file:///C:/a', name: 'b c' }`. A `file:` URI goes by this OS's path rules (`src/paths.js`), so
- * `file:///C:/` and `file://server/share/` are roots; any other scheme by its path's segments.
+ * `file:///` and `file://server/share/` are roots — and on Windows, `file:///C:/` is `c` in the list of
+ * drives, `file:///`; any other scheme by its path's segments.
  * @param {string} uri
  * @returns {{ uri: string, name: string } | null} `null` for a root.
  */
@@ -123,7 +126,11 @@ function parentUri(uri) {
     }
     if (path !== undefined) {
       const parent = paths.parent(path);
-      return parent === null ? null : { uri: paths.toUri(parent), name: paths.basename(path) };
+      if (parent !== null) {
+        return { uri: paths.toUri(parent), name: paths.basename(path) };
+      }
+      const drive = paths.driveName(path);
+      return drive === null || paths.drives === null ? null : { uri: paths.drives, name: drive };
     }
   }
   const url = new URL(uri);

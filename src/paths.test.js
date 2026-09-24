@@ -168,6 +168,31 @@ test('shows a file: URI as its path, and any other URI as it is', () => {
   assert.equal(unix.displayUri('file://host/x'), 'file://host/x', "a path Unix can't have");
 });
 
+test('on Windows, the list of drives is file:/// and /, with each drive as its letter', () => {
+  assert.equal(windows.drives, 'file:///');
+  assert.equal(unix.drives, null);
+  assert.equal(windows.displayUri('file:///'), '/');
+  assert.equal(unix.displayUri('file:///'), '/');
+  assert.equal(windows.fromUri('file:///c'), 'C:\\', 'an entry of the list');
+  assert.equal(windows.fromUri('file:///d/a%20b'), 'D:\\a b');
+  assert.throws(() => windows.fromUri('file:///'), (error) => error instanceof PathError);
+  assert.equal(windows.driveName('C:\\'), 'c');
+  assert.equal(windows.driveName('C:\\x'), null);
+  assert.equal(windows.driveName('\\\\server\\share\\'), null);
+  assert.equal(unix.driveName('/'), null);
+
+  assert.equal(windows.resolveUri('/'), 'file:///', 'forward slashes, as Git Bash writes paths');
+  assert.equal(windows.resolveUri('\\', 'file:///D:/x'), 'file:///D:/', 'a backslash keeps its native meaning');
+  assert.equal(windows.resolveUri('c/Users', 'file:///'), 'file:///C:/Users', 'relative to the list: a drive');
+  assert.equal(windows.resolveUri('D:\\x', 'file:///'), 'file:///D:/x');
+  assert.equal(windows.resolveUri('~', 'file:///'), 'file:///C:/Users/me');
+  assert.equal(windows.resolveUri('..', 'file:///C:/a/b'), 'file:///C:/a');
+  assert.equal(unix.resolveUri('/'), 'file:///');
+  assert.equal(unix.resolveUri('b', 'file:///srv/a'), 'file:///srv/a/b');
+  assert.throws(() => unix.resolveUri('b', 'sftp://host/a'), /it is relative/, 'relative to a remote directory');
+  assert.equal(unix.resolveUri('/b', 'sftp://host/a'), 'file:///b');
+});
+
 test('equals ignores case on Windows only', () => {
   assert.ok(windows.equals('C:\\Users', 'c:\\USERS'));
   assert.ok(!unix.equals('/Users', '/users'));

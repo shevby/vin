@@ -1,5 +1,7 @@
 const fs = require('node:fs');
 const nodePath = require('node:path');
+const { promisify } = require('node:util');
+const execFile = promisify(require('node:child_process').execFile);
 const { paths } = require('../paths');
 const { log } = require('../log');
 const { fsError } = require('./file-system');
@@ -54,8 +56,47 @@ async function lstatOrNull(path) {
   }
 }
 
+/** Drive letters. */
+const LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+
+/** How long probing drive letters waits for one that doesn't answer before listing it anyway. */
+const PROBE_WAIT = 1000;
+
 /**
- * The local disk, for `file:` URIs, through Node's `fs`.
+ * The drives of Windows, by letter, for the list of drives (2.4) — the local ones and mapped network drives,
+ * disconnected ones too, as Explorer shows them. Node has no API for it; `fsutil fsinfo drives` answers in
+ * milliseconds and needs no elevation. Should it fail, each letter is probed with `stat`, which answers at
+ * once for a letter not in use but can take seconds for a disconnected network drive — one that hasn't
+ * answered after `wait` is listed anyway.
+ * @param {object} [options] For tests.
+ * @param {string[]} [options.command] Lists the drives as `C:\`, `D:\`, ….
+ * @param {number} [options.wait] In ms.
+ * @param {string[]} [options.letters] The ones to probe, uppercase and in order.
+ * @returns {Promise<string[]>} Uppercase letters, in order.
+ */
+async function listDrives({ command = ['fsutil', 'fsinfo', 'drives'], wait = PROBE_WAIT, letters = LETTERS } = {}) {
+  try {
+    const [file, ...args] = command;
+    const { stdout } = await execFile(file, args, { windowsHide: true, timeout: 5000 });
+    const listed = [...stdout.matchAll(/\b([A-Z]):\\/gi)].map(([, letter]) => letter.toUpperCase());
+    if (listed.length) {
+      return [...new Set(listed)].sort();
+    }
+  } catch (error) {
+    log.debug('Listing drives with fsutil failed, probing them:', error);
+  }
+  /** @type {Promise<boolean>} */
+  const timeout = new Promise((resolve) => setTimeout(resolve, wait, true).unref());
+  const found = await Promise.all(letters.map((letter) => Promise.race([
+    fs.promises.stat(`${letter}:\\`).then(() => true, (error) => error.code !== 'ENOENT'),
+    timeout,
+  ])));
+  return letters.filter((_, i) => found[i]);
+}
+
+/**
+ * The local disk, for `file:` URIs, through Node's `fs` — and on Windows, the list of drives above them
+ * (`paths.drives`), each a directory named by its letter (`c`).
  * @implements {FileSystemProvider}
  */
 class LocalProvider {
@@ -72,8 +113,20 @@ class LocalProvider {
 
   /** @type {FileSystemProvider['stat']} */
   async stat(uri) {
+    if (uri === paths.drives) {
+      return { type: 'directory', symlink: false, size: 0, mtime: 0, ctime: 0, executable: false };
+    }
     const path = paths.fromUri(uri);
     const entry = await fs.promises.lstat(path);
+    if (paths.parent(path) === null) {
+      const stat = this.#stat(path, entry, false);
+      try {
+        const { bavail, bsize } = await fs.promises.statfs(path);
+        return { ...stat, free: bavail * bsize };
+      } catch {
+        return stat;
+      }
+    }
     if (!entry.isSymbolicLink()) {
       return this.#stat(path, entry, false);
     }
@@ -99,6 +152,9 @@ class LocalProvider {
 
   /** @type {FileSystemProvider['readDirectory']} */
   async readDirectory(uri) {
+    if (uri === paths.drives) {
+      return (await listDrives()).map((letter) => ({ name: letter.toLowerCase(), type: /** @type {const} */ ('directory'), symlink: false }));
+    }
     const path = paths.fromUri(uri);
     const entries = await fs.promises.readdir(path, { withFileTypes: true });
     return Promise.all(entries.map(async (entry) => {
@@ -275,4 +331,4 @@ class LocalProvider {
   }
 }
 
-module.exports = { LocalProvider };
+module.exports = { LocalProvider, listDrives };

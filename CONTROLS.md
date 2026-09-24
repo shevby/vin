@@ -33,7 +33,7 @@ Moving around a pane, mostly as in vifm:
 - `g g`/`shift+g` or `Home`/`End` — the first or last entry.
 - `ctrl+f`/`ctrl+b` or `PageDown`/`PageUp` — a page down or up: first to the bottom (top) row shown, then a page at a time, keeping one row of the last page in view. `ctrl+d`/`ctrl+u` — half a page.
 - `l`, `Right`, or `Enter` — into the directory under the cursor. On a file, a message says it can't be opened yet (2.5).
-- `h`, `Left`, `Backspace`, or `alt+Up` — up to the parent directory, with the cursor on the one you came from. There's no `..` entry.
+- `h`, `Left`, `Backspace`, or `alt+Up` — up to the parent directory, with the cursor on the one you came from. There's no `..` entry. On Windows, above a drive (`/c`) is the list of drives (`/`), each with its free space.
 - `~` — the home directory.
 - `alt+Left` (`ctrl+o`, as in vifm) / `alt+Right` — back and forward through the directories this pane has shown, as in a browser. vifm's forward key is `ctrl+i`, which terminals send as `Tab`, taken by switching panes.
 - A directory you come back to — by any of these — has the cursor where you left it.

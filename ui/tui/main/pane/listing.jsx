@@ -93,7 +93,8 @@ function printable(name) {
 
 /**
  * One entry, full width, in its type's color, over the cursor's where it is. A name too long for the row is
- * cut at the end, keeping its marker.
+ * cut at the end, keeping its marker. A drive in the list of drives shows its free space as its size, and
+ * no time.
  * @param {object} props
  * @param {Entry} props.entry
  * @param {number} props.width
@@ -104,8 +105,9 @@ function printable(name) {
  */
 function Row({ entry, width, showSize, showTime, cursor, year }) {
   const { backgroundColor, ...text } = useLineStyle([group(entry), cursor]);
-  const size = entry.size === null || entry.type === 'directory' ? '' : formatSize(entry.size);
-  const time = entry.mtime === null ? '' : formatTime(entry.mtime, year);
+  const size = entry.free !== undefined ? formatSize(entry.free)
+    : entry.size === null || entry.type === 'directory' ? '' : formatSize(entry.size);
+  const time = entry.mtime === null || entry.free !== undefined ? '' : formatTime(entry.mtime, year);
   return (
     <Box width={width} flexShrink={0} backgroundColor={backgroundColor}>
       <Box flexShrink={1}>
