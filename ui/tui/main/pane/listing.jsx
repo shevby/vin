@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { Box, Text, useBoxMetrics } from 'ink';
 import { formatSize, formatTime } from '../../../../src/format.js';
+import { splitPath } from '../../../../src/handlers/main/pane/search.js';
 import { useLineStyle, useStyle } from '../../common/theme/index.js';
 
 /**
@@ -17,6 +18,30 @@ const CHECK = '✓';
 
 /** Cells a name keeps before a narrow pane drops the modified column, then the size one. */
 const MIN_NAME = 16;
+
+/** The share of a row a tree search's location column takes, and the fewest cells it gets. */
+const LOCATION_SHARE = 0.35;
+const MIN_LOCATION = 8;
+
+/**
+ * The width of a tree search's location column in a row this wide.
+ * @param {number} width
+ * @returns {number}
+ */
+export function locationWidth(width) {
+  return Math.max(MIN_LOCATION, Math.floor(width * LOCATION_SHARE));
+}
+
+/**
+ * Where a tree search found an entry, as its location column says it: its directory from the one searched,
+ * `src/lib/`, or `./` at the top.
+ * @param {string} path The entry's name in the list, `src/lib/x.js`.
+ * @returns {string}
+ */
+export function location(path) {
+  const { directory } = splitPath(path);
+  return directory ? `${directory}/` : './';
+}
 
 /**
  * The first row shown: the previous one, scrolled just enough to show the cursor, and never leaving rows
@@ -98,10 +123,13 @@ function printable(name) {
  * One entry, full width, in its type's color — faded (`pane.hidden`) if it's hidden — over the cursor's
  * where it is. A name too long for the row is
  * cut at the end, keeping its marker. A drive in the list of drives shows its free space as its size, and
- * no time. While anything is selected, a gutter before the name has a check on the rows selected.
+ * no time. While anything is selected, a gutter before the name has a check on the rows selected. In a
+ * tree search's list, the name is the entry's own, and a second column says where it is (`pane.location`),
+ * cut from the start so the end of the path stays.
  * @param {object} props
  * @param {Entry} props.entry
  * @param {number} props.width
+ * @param {number} props.locationWidth The location column's width; 0 for none.
  * @param {boolean} props.showSize
  * @param {boolean} props.showTime
  * @param {string | null} props.cursor The cursor's color group, if it's on this row.
@@ -109,8 +137,10 @@ function printable(name) {
  * @param {boolean} props.gutter Whether to leave room for the check.
  * @param {number} props.year This year, for the modified column.
  */
-function Row({ entry, width, showSize, showTime, cursor, selected, gutter, year }) {
+function Row({ entry, width, locationWidth, showSize, showTime, cursor, selected, gutter, year }) {
   const { backgroundColor, ...text } = useLineStyle([group(entry), entry.hidden ? 'pane.hidden' : null, selected ? 'pane.selected' : null, cursor]);
+  const { backgroundColor: _, ...where } = useLineStyle([group(entry), 'pane.location', entry.hidden ? 'pane.hidden' : null, selected ? 'pane.selected' : null, cursor]);
+  const name = locationWidth ? splitPath(entry.name).name : entry.name;
   const size = entry.free !== undefined ? formatSize(entry.free)
     : entry.size === null || entry.type === 'directory' ? '' : formatSize(entry.size);
   const time = entry.mtime === null || entry.free !== undefined ? '' : formatTime(entry.mtime, year);
@@ -119,11 +149,19 @@ function Row({ entry, width, showSize, showTime, cursor, selected, gutter, year 
       {gutter && <Text {...text}>{selected ? `${CHECK} ` : '  '}</Text>}
       <Box flexShrink={1}>
         <Text {...text} wrap="truncate-end">
-          {printable(entry.name)}
+          {printable(name)}
         </Text>
       </Box>
       <Text {...text}>{marker(entry)}</Text>
       <Box flexGrow={1} />
+      {locationWidth > 0 && (
+        <Box flexShrink={0} width={1 + locationWidth} justifyContent="flex-end">
+          <Text {...text}> </Text>
+          <Text {...where} wrap="truncate-start">
+            {printable(location(entry.name))}
+          </Text>
+        </Box>
+      )}
       {showSize && (
         <Box flexShrink={0}>
           <Text {...text}>{size.padStart(1 + SIZE_WIDTH)}</Text>
@@ -145,6 +183,9 @@ const MemoRow = memo(Row);
  * A pane's listing (2.2): only the rows that fit are rendered, scrolled to keep the cursor in view.
  * @param {object} props
  * @param {Entry[]} props.entries
+ * @param {boolean} [props.tree] Whether it's a tree search's list, whose entries are named by their path:
+ *   each row then has a location column.
+ * @param {string} [props.empty] What an empty listing says. Default: `Empty`.
  * @param {number} props.cursor
  * @param {string[]} props.selected Names, without the group range's.
  * @param {number | null} props.range Where the group being selected starts, if one is; it ends at the
@@ -154,7 +195,7 @@ const MemoRow = memo(Row);
  *   `pane.cursor`.
  * @param {(rows: number) => void} [props.onHeight] Called with the rows that fit, whenever that changes.
  */
-export function Listing({ entries, cursor, selected, range, status, active, onHeight }) {
+export function Listing({ entries, cursor, selected, range, status, active, onHeight, tree = false, empty = 'Empty' }) {
   const ref = useRef(null);
   const { width, height } = useBoxMetrics(ref);
   useEffect(() => {
@@ -166,7 +207,8 @@ export function Listing({ entries, cursor, selected, range, status, active, onHe
   const top = scrollTop(topRef.current, cursor, height, entries.length);
   topRef.current = top;
   const hint = useStyle('core.hint');
-  const { size: showSize, time: showTime } = columnsFor(width);
+  const where = tree ? locationWidth(width) : 0;
+  const { size: showSize, time: showTime } = columnsFor(width - (where ? 1 + where : 0));
   const year = new Date().getFullYear();
   const cursorGroup = active ? 'pane.cursorActive' : 'pane.cursor';
   const names = useMemo(() => new Set(selected), [selected]);
@@ -176,12 +218,13 @@ export function Listing({ entries, cursor, selected, range, status, active, onHe
   return (
     <Box ref={ref} flexGrow={1} flexDirection="column" overflow="hidden">
       {status === 'loading' && <Text {...hint}>Loading…</Text>}
-      {status === 'ready' && entries.length === 0 && <Text {...hint}>Empty</Text>}
+      {status === 'ready' && entries.length === 0 && <Text {...hint}>{empty}</Text>}
       {width > 0 && entries.slice(top, top + height).map((entry, i) => (
         <MemoRow
           key={entry.name}
           entry={entry}
           width={width}
+          locationWidth={where}
           showSize={showSize}
           showTime={showTime}
           cursor={top + i === cursor ? cursorGroup : null}

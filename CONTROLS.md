@@ -43,6 +43,14 @@ Viewing, as in vifm for hidden entries:
 - Hidden entries — names starting with `.`, and on Windows those with the Hidden attribute — are listed, faded (`colors.pane.hidden`). `z a` hides or shows them, `z o` shows them, `z m` hides them (and unselects them). `pane.showHidden: false` in the config starts with them hidden; the bottom border then says how many are.
 - `o` — the sort menu: `n` name (natural order: `file2` before `file10`), `e` extension, `s` size, `m` modified — a capital sorts the other way round (`N` Z to A, `S` largest first, `M` newest first); `r` reverses the order there is, `d` lists directories first or among the rest. Each pane keeps its own; `pane.sortBy`, `pane.sortReverse` and `pane.directoriesFirst` in the config set how they start. An order other than by name shows in the pane's bottom border.
 
+Searching:
+
+- `f` or `/` — search this directory; `shift+f` or `?` — search it and every directory below. You type in the pane's bottom border (`/` or `?`, then your text), and as you type, the pane lists only the entries matching; the arrows (and `PageUp`/`PageDown`) move among them meanwhile. `Enter` keeps the list; `Escape` goes back to what the pane showed.
+- What you type is found anywhere in a name, with `*` for any characters and `?` for one: `rep` finds `report.pdf`, `*.md` Markdown files. Case matters only if you type a capital. Start with `/` for a JavaScript regular expression instead: `/^re.+x$/`, `/\.md$/i` — so pressing `/` then typing `/^re/` shows `//^re/`.
+- A tree search lists each entry by its name, with where it is (`src/lib/`, or `./` at the top) in a second column. It searches in the background, the border counting what it found; hidden directories are searched only while hidden entries are shown.
+- In the list: `n`/`shift+n` — the next or previous match, going round from the last to the first. `Enter`, `l`, or `Right` — go to the entry's directory, the cursor on it (a directory too, rather than into it). `alt+Left` (`ctrl+o`) from there comes back to the list, searched again. `h`/`Left`, or `Escape` with nothing selected, go to the directory searched.
+- The list's entries can be selected, copied, cut, deleted, renamed, and copied or moved to the other pane, wherever they are; the list is searched again after each. Paste and create need a directory: go to one first.
+
 Selecting:
 
 - `v` — select or unselect the entry under the cursor, and move down. Selected entries have a `✓` in a gutter before their names (there while anything is selected) and papercolor-dark's Selected color; the pane's bottom border counts them.

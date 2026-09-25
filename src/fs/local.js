@@ -135,6 +135,43 @@ async function hiddenNames(path) {
   }
 }
 
+/** The most output a search of a whole tree's hidden entries takes from `dir`: 256 MB. */
+const HIDDEN_TREE_BUFFER = 256 * 1024 * 1024;
+
+/**
+ * Every entry with the Hidden attribute in a Windows tree, at any depth, from one `dir /s /a:h /b` —
+ * quoted as in `hiddenNames()`, so a path with `%` or `"` goes without. None on a failure (logged), or once
+ * `signal` aborts.
+ * @param {string} path The tree's directory.
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<string[]>} Paths from `path`, `/`-separated.
+ */
+async function hiddenTree(path, signal) {
+  if (path.includes('%') || path.includes('"')) {
+    return [];
+  }
+  try {
+    const { stdout } = await execFile('cmd.exe', ['/d /u /c dir /s /a:h /b "' + path + '"'], {
+      encoding: 'buffer',
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      maxBuffer: HIDDEN_TREE_BUFFER,
+      signal,
+    });
+    const prefix = path.endsWith('\\') ? path : `${path}\\`;
+    return stdout.toString('utf16le').split(/\r?\n/)
+      .filter((line) => line.length > prefix.length && line.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase())
+      .map((line) => line.slice(prefix.length).replaceAll('\\', '/'));
+  } catch (error) {
+    // 1: none found.
+    const code = /** @type {{ code?: unknown }} */ (error).code;
+    if (code !== 1 && code !== 'ABORT_ERR') {
+      log.error(`Finding the hidden entries under ${path} failed:`, error);
+    }
+    return [];
+  }
+}
+
 /** Drive letters. */
 const LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
 
@@ -232,14 +269,14 @@ class LocalProvider {
   }
 
   /** @type {FileSystemProvider['readDirectory']} */
-  async readDirectory(uri) {
+  async readDirectory(uri, { attributes = true } = {}) {
     if (uri === paths.drives) {
       return (await listDrives()).map((letter) => ({ name: letter.toLowerCase(), type: /** @type {const} */ ('directory'), symlink: false }));
     }
     const path = paths.fromUri(uri);
     const [entries, hidden] = await Promise.all([
       fs.promises.readdir(path, { withFileTypes: true }),
-      this.#attributes ? hiddenNames(path) : new Set(),
+      this.#attributes && attributes ? hiddenNames(path) : new Set(),
     ]);
     return Promise.all(entries.map(async (entry) => {
       const mark = hidden.has(entry.name) ? { hidden: true } : {};
@@ -255,6 +292,11 @@ class LocalProvider {
       }
       return { name: entry.name, type, symlink: true, ...mark };
     }));
+  }
+
+  /** @type {NonNullable<FileSystemProvider['hiddenEntries']>} */
+  async hiddenEntries(uri, { signal } = {}) {
+    return this.#attributes && uri !== paths.drives ? hiddenTree(paths.fromUri(uri), signal) : [];
   }
 
   /** @type {FileSystemProvider['createDirectory']} */

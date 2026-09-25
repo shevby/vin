@@ -207,3 +207,30 @@ test('y y and p copy, d d and p move, y p and d p go to the other pane, which re
   await shows('a c', 'a b c c (2) d');
   assert.equal(fs.readFileSync(path.join(right, 'c (2)'), 'utf8'), 'c');
 });
+
+test('switching panes while a search is typed keeps it, and the other pane takes the keys', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vin-main-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const name of ['apple', 'banana', 'cherry']) {
+    fs.writeFileSync(path.join(dir, name), '');
+  }
+  const uri = paths.toUri(dir);
+  const { vin, main, press, focus } = await open(undefined, { left: uri, right: uri });
+  await main.left.loaded;
+  await main.right.loaded;
+  await press('f');
+  assert.equal(focus(), 'main.left.searchBar.input');
+  await vin.call('core.type', 'an');
+  await tick();
+  await press('tab');
+  assert.equal(focus(), 'main.right');
+  assert.deepEqual(main.left.state.entries.map((entry) => entry.name), ['banana']);
+  assert.equal(main.left.state.search?.typing, false, 'kept, as enter does');
+  await press('j');
+  assert.equal(main.right.state.cursor, 1);
+  await press('tab escape');
+  for (const start = Date.now(); main.left.state.search !== null; await tick()) {
+    assert.ok(Date.now() - start < 1000, 'escape leaves the matches');
+  }
+  assert.equal(focus(), 'main.left');
+});

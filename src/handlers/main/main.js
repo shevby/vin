@@ -110,13 +110,17 @@ class Main extends Handler {
   }
 
   /**
-   * Makes a pane active, giving it the focus.
+   * Makes a pane active, giving it the focus. The other keeps a search being typed there, as `enter` does.
    * @param {Side} side
    * @throws {TypeError} If `side` isn't `left` or `right`.
    */
   activate(side) {
     if (!SIDES.includes(side)) {
       throw new TypeError(`Expected "left" or "right", got ${JSON.stringify(side)}`);
+    }
+    if (side !== this.state.active) {
+      // Its focus goes back to its listing before this one takes it.
+      this[this.state.active]._blur().catch((error) => this.report(error));
     }
     this.state.active = side;
     this[side].focus();
