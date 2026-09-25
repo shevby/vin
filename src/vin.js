@@ -5,6 +5,7 @@ const { Registry } = require('./contributions');
 const { EventBus } = require('./events');
 const { FileSystem } = require('./fs/file-system');
 const { LocalProvider } = require('./fs/local');
+const { Clipboard } = require('./clipboard');
 const Handler = require('./handler');
 const Core = require('./handlers/core/core');
 const { setHost } = require('./host');
@@ -68,11 +69,17 @@ class Vin {
      */
     this.fs = new FileSystem();
     this.fs.register('file', new LocalProvider());
+    /**
+     * Entries copied or cut, to paste — shared by every handler, as `this.clipboard`.
+     * @readonly
+     */
+    this.clipboard = new Clipboard({ report: (error) => this.messages.report(error, 'The clipboard failed') });
     this.#host = {
       events: this.events,
       windows: this.windows,
       config: this.config.reader,
       fs: this.fs,
+      clipboard: this.clipboard,
       messages: this.messages,
       attach: (handler) => {
         const detach = this.registry.attach(handler);

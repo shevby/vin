@@ -269,6 +269,36 @@ class LocalProvider {
     });
   }
 
+  /**
+   * On Windows a symlink needs Developer Mode or admin rights; without them, a link to a directory is made
+   * a junction instead, which works the same for local directories and needs neither.
+   * @type {NonNullable<FileSystemProvider['createSymlink']>}
+   */
+  async createSymlink(uri, targetUri) {
+    const path = paths.fromUri(uri);
+    const target = paths.fromUri(targetUri);
+    // Windows checks the rights first, and would fail with EPERM.
+    if (await lstatOrNull(path)) {
+      throw fsError('EEXIST', 'Already exists', { path: target, dest: path });
+    }
+    if (!this.#byExtension) {
+      await fs.promises.symlink(target, path);
+      return;
+    }
+    const directory = (await fs.promises.stat(target)).isDirectory();
+    try {
+      await fs.promises.symlink(target, path, directory ? 'dir' : 'file');
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EPERM') {
+        throw error;
+      }
+      if (!directory) {
+        throw fsError('EPERM', 'Creating symlinks on Windows needs Developer Mode or admin rights', { path: target, dest: path });
+      }
+      await fs.promises.symlink(target, path, 'junction');
+    }
+  }
+
   /** @type {FileSystemProvider['createReadStream']} */
   async createReadStream(uri, { start, end } = {}) {
     const handle = await fs.promises.open(paths.fromUri(uri), 'r');

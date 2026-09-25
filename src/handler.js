@@ -233,6 +233,15 @@ class Handler {
   }
 
   /**
+   * Entries copied or cut, to paste — one clipboard for all of vin (`src/clipboard.js`).
+   * @returns {InstanceType<typeof import('./clipboard').Clipboard>}
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
+   */
+  get clipboard() {
+    return this.#host('use the clipboard').clipboard;
+  }
+
+  /**
    * Shows the user a message, until their next key press: `this.notify('3 files copied')`.
    * @param {string} text
    * @param {import('./messages').MessageLevel} [level] Default: `info`.

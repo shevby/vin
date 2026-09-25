@@ -21,7 +21,7 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - `:` opens the command line.
 - `Escape` closes the window on top (a dialog, a menu), never the main window; in a pane it unselects (see Panes).
 - `z z` quits — for now: it goes once the command line brings `:q` (6.2).
-- `ctrl+c`, `ctrl+x`, `ctrl+v` are copy, cut, and paste, as in Windows and Linux file managers — and on macOS `cmd+c`, `cmd+x`, `cmd+v` as well (2.7). `ctrl+c` doesn't quit.
+- `ctrl+c`, `ctrl+x`, `ctrl+v` are copy, cut, and paste, as in Windows and Linux file managers — and on macOS `cmd+c`, `cmd+x`, `cmd+v` as well (see Files). `ctrl+c` doesn't quit.
 - A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
 - Everything else: TBD, added as it's built and tried out.
 
@@ -45,6 +45,18 @@ Selecting:
 - `Escape` — drop the group being selected, keeping the rest; else unselect everything.
 - `ctrl+a` — select all; `*` — invert the selection.
 - Going to another directory unselects everything.
+
+Files — acting on the selected entries, or else the one under the cursor:
+
+- `y y` (`ctrl+c`) — copy: put the entries on vin's clipboard, and their paths on the system clipboard as text, one per line. `d d` (`ctrl+x`) — cut, the same, to move them. Either ends the selection.
+- `p` (`ctrl+v`) — paste here: copies, or moves what was cut (which then leaves the clipboard). A copy pasted where it came from is kept next to it as `name (2).txt`. `shift+p` pastes symlinks to the entries instead, holding their absolute paths — on Windows a symlink needs Developer Mode or admin rights; without them, a link to a directory is made a junction.
+- Windows Terminal keeps `ctrl+v` for its own paste and sends the clipboard's text instead: a pane takes pasted paths as a paste of those entries — vin's own, cut ones still moved, or any others (Explorer's "Copy as path") copied.
+- `y p` — copy to the other pane's directory; `d p` — move there.
+- A name already there asks what to do: `o` overwrite, `s` skip (what `Enter` starts on), `b` keep both (`name (2)`), each with an "all" version on the capital letter (`O`, `S`, `B`); `c` or `Escape` cancels the rest. For a directory onto a directory, `m`/`M` merge instead: its entries go in one by one, asked about the same way.
+- `shift+d shift+d` or `Delete` — delete. Permanent, after a question that starts on Delete (`pane.confirmDelete: false` in the config turns it off) — unless `pane.trash` names a directory, which deleting then moves entries to without asking. `shift+Delete` always deletes for good, and so does deleting inside the trash.
+- `c w` — rename the entry under the cursor, starting from its name with the cursor before the extension. `c c`, `c a w`, and `c i w` do the same, for vim hands.
+- `a` — create a file, or a directory if the name ends with `/`; `/` inside a name creates the directories on the way (`src/lib/`).
+- Every one of these keys can be changed in the config's `keybindings`, like any other.
 
 Switching panes, as in vifm:
 

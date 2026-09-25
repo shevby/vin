@@ -167,3 +167,43 @@ test('v selects and moves down, shift+v selects a group until v or shift+v, Esca
   assert.deepEqual(pane.state.selected, []);
   assert.equal(focus(), 'main.left', 'Escape leaves the main window open');
 });
+
+test('y y and p copy, d d and p move, y p and d p go to the other pane, which reloads', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vin-main-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const [left, right] = [path.join(dir, 'left'), path.join(dir, 'right')];
+  fs.mkdirSync(left);
+  fs.mkdirSync(right);
+  for (const name of ['a', 'b', 'c', 'd']) {
+    fs.writeFileSync(path.join(left, name), name);
+  }
+  const { main, press, focus } = await open(undefined, { left: paths.toUri(left), right: paths.toUri(right) });
+  await Promise.all([main.left.loaded, main.right.loaded]);
+  /** @param {import('./pane/pane')} pane */
+  const names = (pane) => pane.state.entries.map((entry) => entry.name).join(' ');
+  /**
+   * Waits for both panes to show these names, up to a second.
+   * @param {string} l
+   * @param {string} r
+   */
+  const shows = async (l, r) => {
+    for (const start = Date.now(); names(main.left) !== l || names(main.right) !== r; await tick()) {
+      assert.ok(Date.now() - start < 1000, `left: ${names(main.left)}; right: ${names(main.right)}`);
+    }
+  };
+  await press('y y tab p');
+  await shows('a b c d', 'a');
+  await press('tab j d d tab p');
+  await shows('a c d', 'a b');
+  await press('tab y p');
+  await shows('a c d', 'a b c');
+  await press('j d p');
+  await shows('a c', 'a b c d');
+  await press('ctrl+c tab ctrl+v');
+  for (const start = Date.now(); focus() !== 'main.right.choiceList'; await tick()) {
+    assert.ok(Date.now() - start < 1000, 'c is asked about');
+  }
+  await press('b');
+  await shows('a c', 'a b c c (2) d');
+  assert.equal(fs.readFileSync(path.join(right, 'c (2)'), 'utf8'), 'c');
+});

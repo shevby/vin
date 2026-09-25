@@ -193,6 +193,27 @@ test("changing a name's case is a rename, even where the file system ignores cas
   assert.equal(fs.readFileSync(path.join(dir, 'NAME'), 'utf8'), 'kept');
 });
 
+test('createSymlink links to a directory, as a junction on Windows without the rights, and to a file where it may', async (t) => {
+  const { dir, uri } = tempDir(t);
+  fs.mkdirSync(path.join(dir, 'target'));
+  fs.writeFileSync(path.join(dir, 'target', 'inside'), '');
+  fs.writeFileSync(path.join(dir, 'file'), 'text');
+  await local.createSymlink(uri('dir-link'), uri('target'));
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'dir-link')), ['inside']);
+  assert.deepEqual(await local.stat(uri('dir-link')), { ...await local.stat(uri('dir-link')), type: 'directory', symlink: true });
+  await rejectsWith(local.createSymlink(uri('dir-link'), uri('file')), 'EEXIST');
+  try {
+    await local.createSymlink(uri('file-link'), uri('file'));
+  } catch (error) {
+    assert.equal(process.platform, 'win32');
+    assert.equal(/** @type {any} */ (error).code, 'EPERM');
+    assert.match(/** @type {any} */ (error).reason, /Developer Mode or admin rights/);
+    return;
+  }
+  assert.equal(fs.readFileSync(path.join(dir, 'file-link'), 'utf8'), 'text');
+  assert.equal(fs.lstatSync(path.join(dir, 'file-link')).isSymbolicLink(), true);
+});
+
 test('streams read a byte range and write a new file, failing before they are returned', async (t) => {
   const { uri } = tempDir(t);
   await local.writeFile(uri('f'), '0123456789');
