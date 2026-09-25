@@ -84,6 +84,8 @@ const { paths } = require('../paths');
  * @property {(uri: string, listener: (change: FileChange) => void, options?: { recursive?: boolean }) => () => void}
  *   watch Reports changes to the resource, or to a directory's entries (with `recursive`, at any depth);
  *   returns the function that stops watching.
+ * @property {(uri: string) => string} [realUri] For a scheme that is another's resources under other names
+ *   (`trash:`, `src/fs/trash.js`): the URI a resource has there, so moving and copying between the two work.
  */
 
 /**
@@ -203,17 +205,32 @@ class FileSystem {
   }
 
   /**
-   * The provider for both URIs — moving between providers is 5.5's streamed copy.
+   * The URI a resource has on the file system that really holds it: a `trash:` URI's `file:` one; any
+   * other as it is.
+   * @param {string} uri
+   * @returns {string}
+   */
+  realUri(uri) {
+    return this.provider(uri).realUri?.(uri) ?? uri;
+  }
+
+  /**
+   * The provider for both URIs — mapped to their real ones if they're on different ones (the trash and the
+   * disk under it); moving between providers is 5.5's streamed copy.
    * @param {string} from
    * @param {string} to
    * @param {string} action For the error, e.g. `copy`.
+   * @returns {{ provider: FileSystemProvider, from: string, to: string }}
    */
   #same(from, to, action) {
+    if (this.provider(from) !== this.provider(to)) {
+      [from, to] = [this.realUri(from), this.realUri(to)];
+    }
     const provider = this.provider(from);
     if (this.provider(to) !== provider) {
       throw fsError('EXDEV', `Can't ${action} between file systems yet`, { path: from, dest: to });
     }
-    return provider;
+    return { provider, from, to };
   }
 
   /** @type {FileSystemProvider['stat']} */
@@ -248,7 +265,8 @@ class FileSystem {
 
   /** @type {FileSystemProvider['rename']} */
   async rename(from, to, options) {
-    return this.#same(from, to, 'move').rename(from, to, options);
+    const pair = this.#same(from, to, 'move');
+    return pair.provider.rename(pair.from, pair.to, options);
   }
 
   /**
@@ -256,23 +274,23 @@ class FileSystem {
    * @type {NonNullable<FileSystemProvider['copy']>}
    */
   async copy(from, to, options) {
-    const provider = this.#same(from, to, 'copy');
-    if (!provider.copy) {
+    const pair = this.#same(from, to, 'copy');
+    if (!pair.provider.copy) {
       // Streaming within one provider joins streaming between providers, in 2.10 and 5.5.
       throw fsError('ENOSYS', "This file system can't copy yet", { path: from, dest: to });
     }
-    return provider.copy(from, to, options);
+    return pair.provider.copy(pair.from, pair.to, options);
   }
 
   /**
    * @type {NonNullable<FileSystemProvider['createSymlink']>}
    */
   async createSymlink(uri, target) {
-    const provider = this.#same(target, uri, 'link');
-    if (!provider.createSymlink) {
+    const pair = this.#same(target, uri, 'link');
+    if (!pair.provider.createSymlink) {
       throw fsError('ENOSYS', "This file system has no symlinks", { path: target, dest: uri });
     }
-    return provider.createSymlink(uri, target);
+    return pair.provider.createSymlink(pair.to, pair.from);
   }
 
   /** @type {FileSystemProvider['createReadStream']} */

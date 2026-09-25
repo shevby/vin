@@ -116,8 +116,8 @@ async function writeText(text, { platform = process.platform, env = process.env 
 const system = { writeText };
 
 /**
- * How an entry's URI goes on the OS clipboard: its native path, or else the URI itself.
- * @param {string} uri
+ * How a URI goes on the OS clipboard: its native path, or else the URI itself.
+ * @param {string} uri A real one — `file:` for an entry in the trash.
  * @returns {string}
  */
 function asText(uri) {
@@ -165,15 +165,32 @@ class Clipboard {
   #content = null;
   /** @type {(error: unknown) => void} */
   #report;
+  /** @type {(uri: string) => string} */
+  #realUri;
   /** Whether writing to the OS clipboard has failed before — reported once, logged after that. */
   #failed = false;
 
   /**
    * @param {object} options
    * @param {(error: unknown) => void} options.report Shows the first failure to write to the OS clipboard.
+   * @param {(uri: string) => string} [options.realUri] The URI an entry really has — `file:` for one in
+   *   the trash — whose path goes on the OS clipboard. Default: the URI itself.
    */
-  constructor({ report }) {
+  constructor({ report, realUri = (uri) => uri }) {
     this.#report = report;
+    this.#realUri = realUri;
+  }
+
+  /**
+   * @param {string} uri
+   * @returns {string} Its path, or else itself, as the OS clipboard gets it.
+   */
+  #text(uri) {
+    try {
+      return asText(this.#realUri(uri));
+    } catch {
+      return uri;
+    }
   }
 
   /**
@@ -198,7 +215,7 @@ class Clipboard {
       throw new TypeError('Expected an array of URIs');
     }
     this.#content = { mode, uris: [...uris] };
-    system.writeText(uris.map(asText).join(os.EOL)).catch((error) => {
+    system.writeText(uris.map((uri) => this.#text(uri)).join(os.EOL)).catch((error) => {
       if (this.#failed) {
         log.debug('Writing the OS clipboard failed again:', error);
         return;
@@ -225,7 +242,7 @@ class Clipboard {
       return null;
     }
     const own = this.#content;
-    const key = (/** @type {string} */ uri) => asText(uri);
+    const key = (/** @type {string} */ uri) => this.#text(uri);
     if (own && own.uris.length === uris.length && own.uris.every((uri, i) => key(uri) === key(uris[i]))) {
       return this.content;
     }

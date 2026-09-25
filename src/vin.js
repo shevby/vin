@@ -6,6 +6,8 @@ const { EventBus } = require('./events');
 const { FileSystem } = require('./fs/file-system');
 const { LocalProvider } = require('./fs/local');
 const { Clipboard } = require('./clipboard');
+const { Trash } = require('./trash');
+const { TrashProvider } = require('./fs/trash');
 const Handler = require('./handler');
 const Core = require('./handlers/core/core');
 const { setHost } = require('./host');
@@ -68,18 +70,29 @@ class Vin {
      * @readonly
      */
     this.fs = new FileSystem();
-    this.fs.register('file', new LocalProvider());
+    const local = new LocalProvider();
+    this.fs.register('file', local);
+    /**
+     * Where deleting moves entries, when `pane.trash` is on — shown as `/trash`, the `trash:` scheme.
+     * @readonly
+     */
+    this.trash = new Trash({ config: this.config.reader });
+    this.fs.register('trash', new TrashProvider(this.trash, local));
     /**
      * Entries copied or cut, to paste — shared by every handler, as `this.clipboard`.
      * @readonly
      */
-    this.clipboard = new Clipboard({ report: (error) => this.messages.report(error, 'The clipboard failed') });
+    this.clipboard = new Clipboard({
+      report: (error) => this.messages.report(error, 'The clipboard failed'),
+      realUri: (uri) => this.fs.realUri(uri),
+    });
     this.#host = {
       events: this.events,
       windows: this.windows,
       config: this.config.reader,
       fs: this.fs,
       clipboard: this.clipboard,
+      trash: this.trash,
       messages: this.messages,
       attach: (handler) => {
         const detach = this.registry.attach(handler);

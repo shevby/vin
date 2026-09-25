@@ -75,7 +75,7 @@ test('copy and move put entries into a directory; a move leaves the source', asy
   const { dir, uri } = tempDir(t, { a: { 'f.txt': 'f', sub: { g: 'g' } }, b: 'b', to: {} });
   const { resolve } = answering([]);
   const copied = await transfer(files, { mode: 'copy', sources: [uri('a'), uri('b')], destination: uri('to'), resolve });
-  assert.deepEqual(copied, { created: ['a', 'b'], skipped: 0, failures: [], cancelled: false });
+  assert.deepEqual(copied, { created: ['a', 'b'], done: [uri('a'), uri('b')], skipped: 0, failures: [], cancelled: false });
   assert.deepEqual(read(path.join(dir, 'to')), { a: { 'f.txt': 'f', sub: { g: 'g' } }, b: 'b' });
   fs.rmSync(path.join(dir, 'to'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'to'));
@@ -129,7 +129,7 @@ test('a copy into its own directory is kept next to it, a move there is left alo
   const copied = await transfer(files, { mode: 'copy', sources: [uri('notes.txt'), uri('d')], destination: uri(), resolve });
   assert.deepEqual(copied.created, ['notes (2).txt', 'd (2)']);
   const moved = await transfer(files, { mode: 'move', sources: [uri('notes.txt')], destination: uri(), resolve });
-  assert.deepEqual(moved, { created: [], skipped: 1, failures: [], cancelled: false });
+  assert.deepEqual(moved, { created: [], done: [], skipped: 1, failures: [], cancelled: false });
   const into = await transfer(files, { mode: 'move', sources: [uri('d')], destination: uri('d', 'inner'), resolve });
   assert.match(String(into.failures[0]), /Can't move d into itself/);
   assert.deepEqual(Object.keys(read(dir)).sort(), ['d', 'd (2)', 'notes (2).txt', 'notes.txt']);

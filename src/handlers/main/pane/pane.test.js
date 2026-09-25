@@ -8,6 +8,7 @@ const { paths } = require('../../../paths');
 const { failure } = require('../../../errors');
 const { opener } = require('../../../open');
 const Pane = require('./pane');
+const { volatile } = require('../../../volatile');
 
 /**
  * A temp directory, removed after the test.
@@ -452,43 +453,125 @@ test('delete asks first, on Delete, and deletes for good; the cursor stays on it
   assert.deepEqual(fs.readdirSync(dir), ['a'], 'a directory, with what is inside');
 });
 
-test('with pane.trash, delete moves entries there, keeping both of one name; inside it, and with shift+Delete, deletes for good', async (t) => {
-  const dir = tempDir(t, { work: null, trash: null });
-  const work = path.join(dir, 'work');
-  const trash = path.join(dir, 'trash');
-  fs.writeFileSync(path.join(work, 'a'), 'new');
-  fs.writeFileSync(path.join(work, 'b'), '');
-  fs.writeFileSync(path.join(trash, 'a'), 'old');
-  const { pane, press, focus, messages } = await openWindow(work, `{ pane: { trash: ${JSON.stringify(path.join(trash, 'sub'))}, confirmDelete: false } }`);
-  fs.renameSync(path.join(trash, 'a'), path.join(dir, 'a-old'));
+test('with pane.trash on, delete moves entries to .vin/trash, recording where they came from; in /trash, r restores them', async (t) => {
+  const dir = tempDir(t, { d: null, keep: '' });
+  fs.writeFileSync(path.join(dir, 'd', 'a.txt'), 'a');
+  const trash = path.join(volatile.directory, 'trash');
+  t.after(() => fs.rmSync(trash, { recursive: true, force: true }));
+  const { vin, pane, press, focus, messages } = await openWindow(dir, '{ pane: { trash: true } }');
   await press('delete');
   assert.equal(focus(), 'pane', 'no question');
   await until(() => messages().length, 'the message');
-  assert.deepEqual(messages(), ['Moved a to the trash']);
-  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')), ['a'], 'created when first needed');
-  fs.writeFileSync(path.join(work, 'a'), 'again');
-  await pane.reload();
-  pane.first();
-  await press('delete');
+  assert.deepEqual(messages(), ['Moved d to the trash']);
+  assert.deepEqual(fs.readdirSync(path.join(trash, 'd')), ['a.txt']);
+  const records = JSON.parse(fs.readFileSync(path.join(volatile.directory, 'trash.json'), 'utf8'));
+  assert.equal(records[path.join(trash, 'd')].path, path.join(dir, 'd'));
+  assert.equal(vin.trash.origin('trash:///d'), paths.toUri(path.join(dir, 'd')));
+
+  await pane.navigate('/trash');
+  assert.equal(pane.state.uri, 'trash:///');
+  assert.equal(paths.displayUri(pane.state.uri), '/trash');
+  assert.deepEqual(pane.state.entries.map((entry) => entry.name), ['d']);
+  await pane.navigate('/trash/d');
+  assert.equal(paths.displayUri(pane.state.uri), '/trash/d');
+  assert.deepEqual(pane.state.entries.map((entry) => entry.name), ['a.txt']);
+  await pane.toParent();
+  await press('r');
   await until(() => messages().length, 'the message');
-  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')).sort(), ['a', 'a (2)']);
-  await press('shift+delete');
-  await until(() => messages().length, 'the message');
-  assert.deepEqual(fs.readdirSync(work), []);
-  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')).sort(), ['a', 'a (2)'], 'b: deleted for good');
-  await pane.navigate(path.join(trash, 'sub'));
-  await press('delete');
-  await until(() => messages().length, 'the message');
-  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')), ['a (2)'], 'in the trash: for good');
+  assert.deepEqual(messages(), ['Restored d']);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['d', 'keep']);
+  assert.deepEqual(fs.readdirSync(trash), []);
+  assert.equal(vin.trash.origin('trash:///d'), null, 'forgotten');
 });
 
-test('pane.trash must be an absolute path', async (t) => {
-  const dir = tempDir(t, { a: '' });
-  const { press, messages } = await openWindow(dir, `{ pane: { trash: 'relative/trash' } }`);
+test('the trash keeps both of one name, restores into directories gone since, and asks about a name taken there', async (t) => {
+  const dir = tempDir(t, { work: null, trash: null });
+  const work = path.join(dir, 'work');
+  const trash = path.join(dir, 'trash');
+  fs.mkdirSync(path.join(work, 'sub'));
+  fs.writeFileSync(path.join(work, 'sub', 'a'), 'first');
+  const { vin, pane, press, focus, messages } = await openWindow(work, `{ pane: { trash: true, trashDirectory: ${JSON.stringify(trash)}, confirmDelete: false } }`);
+  await pane.navigate('sub');
   await press('delete');
   await until(() => messages().length, 'the message');
-  assert.match(messages()[0] ?? '', /^pane\.trash in the config must be an absolute path/);
-  assert.deepEqual(fs.readdirSync(dir), ['a']);
+  fs.writeFileSync(path.join(work, 'sub', 'a'), 'second');
+  await pane.reload();
+  await press('delete');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(trash).sort(), ['a', 'a (2)']);
+  await pane.toParent();
+  await press('shift+delete');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(work), [], 'shift+Delete: for good');
+  assert.deepEqual(fs.readdirSync(trash).sort(), ['a', 'a (2)']);
+
+  await pane.navigate('/trash');
+  await press('y y');
+  await pane.navigate(dir);
+  await press('p');
+  await until(() => pane.state.entries.some((entry) => entry.name === 'a'), 'the copy');
+  assert.equal(fs.readFileSync(path.join(dir, 'a'), 'utf8'), 'first', 'copied out of the trash');
+
+  await pane.navigate('/trash');
+  await press('v v r');
+  await until(() => focus() === 'choiceList', 'the question');
+  await press('b');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(path.join(work, 'sub')).sort(), ['a', 'a (2)'], 'the directory made again; both kept');
+  assert.equal(fs.readFileSync(path.join(work, 'sub', 'a (2)'), 'utf8'), 'second');
+  assert.deepEqual(fs.readdirSync(trash), []);
+
+  fs.writeFileSync(path.join(trash, 'stray'), '');
+  await pane.reload();
+  await press('r');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(messages(), ["Can't restore stray: where it came from isn't recorded"]);
+  await press('delete');
+  await until(() => pane.state.entries.length === 0, 'the listing');
+  assert.equal(focus(), 'pane', 'in the trash, for good, but confirmDelete is off');
+});
+
+test('the trash shows as trash at the top, and leads back there; it is not an entry to change', async (t) => {
+  const { pane, press, messages } = await openWindow(tempDir(t), '{ pane: { trash: true } }');
+  await pane.navigate('/trash');
+  await pane.toParent();
+  assert.equal(pane.state.uri, 'file:///', 'the list of drives on Windows, / elsewhere');
+  assert.equal(pane.state.entries[pane.state.cursor]?.name, 'trash');
+  assert.equal(pane.state.entries.filter((entry) => entry.name === 'trash').length, 1);
+  await press('delete');
+  assert.match(messages()[0] ?? '', /trash here is the trash itself/);
+  await pane.open();
+  assert.equal(pane.state.uri, 'trash:///');
+});
+
+test('with the trash off, deleting is for good, /trash is a path, and r and emptying say it is off', async (t) => {
+  const dir = tempDir(t, { a: '' });
+  const { vin, pane, press, focus, messages } = await openWindow(dir);
+  await press('r');
+  assert.match(messages()[0] ?? '', /Only entries in \/trash can be restored/);
+  await assert.rejects(pane.emptyTrash(), /The trash is off: turn on pane.trash/);
+  await pane.navigate('trash:///');
+  assert.match(messages().at(-1) ?? '', /The trash is off/);
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  await press('delete');
+  await until(() => focus() === 'confirm', 'the question');
+  assert.equal(/** @type {any} */ (vin.windows.focused)?.state.selected, 'yes', 'the question starts on Delete');
+});
+
+test('emptying the trash asks, then deletes everything in it for good, and its records', async (t) => {
+  const dir = tempDir(t, { a: '', b: '', trash: null });
+  const { vin, pane, press, focus, messages } = await openWindow(dir, `{ pane: { trash: true, trashDirectory: ${JSON.stringify(path.join(dir, 'trash'))} } }`);
+  await press('v v delete');
+  await until(() => messages().length, 'the message');
+  const emptied = pane.emptyTrash();
+  await until(() => focus() === 'confirm', 'the question');
+  await press('y');
+  await emptied;
+  assert.deepEqual(messages(), ['Emptied the trash']);
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'trash')), []);
+  assert.equal(vin.trash.origin('trash:///a'), null);
+  await pane.emptyTrash();
+  assert.deepEqual(messages().at(-1), 'The trash is empty');
 });
 
 test('rename starts with the name, the cursor before its extension; a name taken is refused until changed', async (t) => {

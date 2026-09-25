@@ -242,6 +242,15 @@ class Handler {
   }
 
   /**
+   * Where deleting moves entries, if `pane.trash` is on (`src/trash.js`), shown as `/trash`.
+   * @returns {InstanceType<typeof import('./trash').Trash>}
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
+   */
+  get trash() {
+    return this.#host('use the trash').trash;
+  }
+
+  /**
    * Shows the user a message, until their next key press: `this.notify('3 files copied')`.
    * @param {string} text
    * @param {import('./messages').MessageLevel} [level] Default: `info`.
