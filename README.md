@@ -1,8 +1,11 @@
 # vin
 
-A terminal file manager inspired by [vifm](https://vifm.info/): two panes, vim-style keys, and everything configurable. It's written in JavaScript with [Ink](https://github.com/vadimdemedes/ink), and built to grow network protocols (SFTP, FTP) and plugins in any language.
+> [!WARNING]
+> **vin is still in development and hasn't been tested in real use.** It copies, moves, renames and deletes real files, and deleting is permanent unless you turn on the trash. Try it on files you can afford to lose, and keep backups. Keys and config options may change without notice.
+>
+> What exists so far is local file management: the MVP milestone on the [roadmap](ROADMAP.md) is nearly done. Network protocols, plugins, the context menu and the command line are planned but not built yet.
 
-> **Status: early development.** Local file management works: the MVP milestone on the [roadmap](ROADMAP.md) is nearly done. Network protocols, plugins, the context menu and the command line are planned but not built yet. Expect keys and config options to change.
+A terminal file manager inspired by [vifm](https://vifm.info/): two panes, vim-style keys, and everything configurable. It's written in JavaScript with [Ink](https://github.com/vadimdemedes/ink), and built to grow network protocols (SFTP, FTP) and plugins in any language.
 
 ## Features
 
