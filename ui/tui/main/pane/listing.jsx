@@ -95,7 +95,8 @@ function printable(name) {
 }
 
 /**
- * One entry, full width, in its type's color, over the cursor's where it is. A name too long for the row is
+ * One entry, full width, in its type's color — faded (`pane.hidden`) if it's hidden — over the cursor's
+ * where it is. A name too long for the row is
  * cut at the end, keeping its marker. A drive in the list of drives shows its free space as its size, and
  * no time. While anything is selected, a gutter before the name has a check on the rows selected.
  * @param {object} props
@@ -109,7 +110,7 @@ function printable(name) {
  * @param {number} props.year This year, for the modified column.
  */
 function Row({ entry, width, showSize, showTime, cursor, selected, gutter, year }) {
-  const { backgroundColor, ...text } = useLineStyle([group(entry), selected ? 'pane.selected' : null, cursor]);
+  const { backgroundColor, ...text } = useLineStyle([group(entry), entry.hidden ? 'pane.hidden' : null, selected ? 'pane.selected' : null, cursor]);
   const size = entry.free !== undefined ? formatSize(entry.free)
     : entry.size === null || entry.type === 'directory' ? '' : formatSize(entry.size);
   const time = entry.mtime === null || entry.free !== undefined ? '' : formatTime(entry.mtime, year);

@@ -39,6 +39,8 @@ const { paths } = require('../paths');
  * @property {string} name
  * @property {FileType} type For a symlink, its target's.
  * @property {boolean} symlink
+ * @property {boolean} [hidden] Hidden by the file system's own mark — the Hidden attribute on Windows —
+ *   where it has one. A name starting with `.` is hidden by convention; that's the caller's to tell.
  */
 
 /**

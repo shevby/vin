@@ -6,7 +6,7 @@ import { useSelector } from '../store/index.js';
  * @typedef {import('../../../../src/colors.js').Style} Style
  * @typedef {import('../../../../src/colors.js').Color} Color
  * @typedef {{ [id: string]: Style }} Colors
- * @typedef {{ color?: string, backgroundColor?: string, bold?: boolean, italic?: boolean, underline?: boolean, inverse?: boolean }} TextStyle
+ * @typedef {{ color?: string, backgroundColor?: string, bold?: boolean, italic?: boolean, underline?: boolean, inverse?: boolean, dimColor?: boolean }} TextStyle
  */
 
 /** @type {Colors} */
@@ -59,6 +59,9 @@ export function textStyle(style, window) {
     if (style?.[flag] !== undefined) {
       props[flag] = style[flag];
     }
+  }
+  if (style?.dim !== undefined) {
+    props.dimColor = style.dim;
   }
   return props;
 }

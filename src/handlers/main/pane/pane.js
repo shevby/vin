@@ -9,12 +9,15 @@ const Prompt = require('../../prompt/prompt');
 const { transfer, same, statOrNull } = require('./operations');
 const { TRASH_URI } = require('../../../trash');
 const { checkPattern, expand, extension } = require('./pattern');
+const { SORT_KEYS, comparator, isHidden, describeSort } = require('./sorting');
 
 /**
  * @typedef {import('../../../fs/file-system').FileType} FileType
  * @typedef {import('./operations').Mode} Mode
  * @typedef {import('./operations').Conflict} Conflict
  * @typedef {import('./operations').Resolution} Resolution
+ * @typedef {import('./sorting').Sort} Sort
+ * @typedef {import('./sorting').SortKey} SortKey
  */
 
 /**
@@ -27,6 +30,7 @@ const { checkPattern, expand, extension } = require('./pattern');
  * @property {boolean} executable
  * @property {number | null} size In bytes.
  * @property {number | null} mtime Last modified, in ms since the epoch.
+ * @property {boolean} hidden A name starting with `.`, or the Hidden attribute on Windows (2.11).
  * @property {number} [free] For a root — a drive in the list of drives (2.4) — the bytes free on it, once
  *   known.
  */
@@ -45,6 +49,9 @@ const { checkPattern, expand, extension } = require('./pattern');
  * @property {string[]} selected Names selected, in listing order — without the group range's.
  * @property {number | null} range While selecting a group, the entry it started at; the range spans from
  *   there to the cursor.
+ * @property {boolean} showHidden Whether hidden entries are listed (2.11).
+ * @property {number} hiddenCount How many hidden entries aren't, while they aren't.
+ * @property {Sort} sort The listing's order.
  */
 
 /**
@@ -105,22 +112,6 @@ function rootUri() {
   return paths.drives ?? 'file:///';
 }
 
-/** Natural order (`file2` before `file10`), ignoring case and accents. */
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-
-/**
- * The listing's order until sorting is configurable (2.11): directories first — symlinks to them too —
- * then by name, in natural order; names equal but for case or accents in code-point order, so the order
- * is stable.
- * @param {Pick<Entry, 'name' | 'type'>} a
- * @param {Pick<Entry, 'name' | 'type'>} b
- * @returns {number}
- */
-function compareEntries(a, b) {
-  const directories = Number(b.type === 'directory') - Number(a.type === 'directory');
-  return directories || collator.compare(a.name, b.name) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-}
-
 /**
  * A `file:` URI as `paths.toUri()` writes it, so a directory has one URI however it was reached
  * (`childUri()` escapes more than `toUri()` does); any other URI as it is.
@@ -165,6 +156,13 @@ function canonical(uri) {
  * renamed with one name, a pattern (2.8, `pattern.js`). A pane reloads after its own operations, and emits
  * `changed` with the directories they changed, which `main` reloads the other pane for; watching for
  * changes made elsewhere is 2.15.
+ *
+ * Hidden entries (2.11) — a name starting with `.`, or the Hidden attribute on Windows — are listed, in
+ * `pane.hidden`'s faded color, unless `pane.showHidden` is off or they're hidden with `hideHiddenEntries`.
+ * The listing is sorted (`sorting.js`) by name, extension, size or modified time, either way, directories
+ * first or not — from the config, changed per pane with `sort` and the sort menu (`chooseSort`). Sizes and
+ * times come after the listing, so sorting by them orders it again once they're all in, keeping the cursor
+ * on its entry.
  * @extends {Handler<PaneState>}
  */
 class Pane extends Handler {
@@ -205,6 +203,13 @@ class Pane extends Handler {
       { method: 'reload', title: 'Reload', description: 'Lists the directory again' },
       { method: 'restore', title: 'Restore from the trash', description: 'Puts entries in /trash back where they were deleted from' },
       { method: 'emptyTrash', title: 'Empty the trash', description: 'Deletes everything in /trash for good' },
+      { method: 'toggleHidden', title: 'Show or hide hidden entries', description: 'Names starting with ., and on Windows ones with the Hidden attribute' },
+      { method: 'showHiddenEntries', title: 'Show hidden entries' },
+      { method: 'hideHiddenEntries', title: 'Hide hidden entries' },
+      { method: 'sort', title: 'Sort', description: 'By name, extension, size or modified; true reverses it' },
+      { method: 'reverseSort', title: 'Reverse the order' },
+      { method: 'toggleDirectoriesFirst', title: 'Directories first, or not' },
+      { method: 'chooseSort', title: 'Choose the order', description: 'A menu: n name, e extension, s size, m modified — capitals the other way round' },
     ],
     keybindings: [
       { key: 'up', command: 'pane.up' },
@@ -256,6 +261,10 @@ class Pane extends Handler {
       { key: 'c c', command: 'pane.rename' },
       { key: 'a', command: 'pane.create' },
       { key: 'r', command: 'pane.restore' },
+      { key: 'z a', command: 'pane.toggleHidden' },
+      { key: 'z o', command: 'pane.showHiddenEntries' },
+      { key: 'z m', command: 'pane.hideHiddenEntries' },
+      { key: 'o', command: 'pane.chooseSort' },
     ],
     configuration: [
       {
@@ -276,6 +285,31 @@ class Pane extends Handler {
         default: true,
         description: 'Ask before deleting for good.',
       },
+      {
+        key: 'showHidden',
+        type: 'boolean',
+        default: true,
+        description: 'List hidden entries — names starting with ., and on Windows ones with the Hidden attribute — in a faded color (colors.pane.hidden). z a switches while vin runs.',
+      },
+      {
+        key: 'sortBy',
+        type: 'string',
+        enum: [...SORT_KEYS],
+        default: 'name',
+        description: 'What the listing is sorted by: name (natural order: file2 before file10), extension, size, or modified. o changes it per pane.',
+      },
+      {
+        key: 'sortReverse',
+        type: 'boolean',
+        default: false,
+        description: 'Sort the other way round: Z to A, largest or newest first.',
+      },
+      {
+        key: 'directoriesFirst',
+        type: 'boolean',
+        default: true,
+        description: 'List directories before everything else.',
+      },
     ],
     // papercolor-dark, from vifm-colors; see src/colors.js.
     colors: [
@@ -291,6 +325,8 @@ class Pane extends Handler {
       { key: 'socket', default: { fg: 140, bold: true }, description: 'Sockets (vifm: Socket).' },
       { key: 'device', default: { fg: 125 }, description: 'Block and character devices (vifm: Device).' },
       { key: 'selected', default: { fg: 173, bg: 235, bold: true }, description: 'Selected entries (vifm: Selected).' },
+      { key: 'hidden', default: { dim: true }, description: "Hidden entries, over their type's color: faded, where the terminal can." },
+      { key: 'sort', default: { fg: 244 }, description: "The order, in the bottom border, when it isn't by name (vifm: LineNr)." },
     ],
   };
 
@@ -302,6 +338,8 @@ class Pane extends Handler {
   #listing = Promise.resolve(/** @type {Outcome} */ ('listed'));
   /** @type {Promise<void>} The latest listing's details. */
   #details = Promise.resolve();
+  /** @type {Entry[]} Every entry of the directory shown, hidden ones too, with their details as they come. */
+  #all = [];
   /** @type {string[]} Directories shown, oldest first, as URIs. */
   #history = [];
   /** Where in `#history` the pane is. */
@@ -326,7 +364,22 @@ class Pane extends Handler {
   }
 
   onInit() {
-    this.update({ uri: this.#uri, status: 'loading', entries: [], cursor: 0, selected: [], range: null });
+    const config = this.config;
+    this.update({
+      uri: this.#uri,
+      status: 'loading',
+      entries: [],
+      cursor: 0,
+      selected: [],
+      range: null,
+      showHidden: /** @type {boolean} */ (config.get('pane.showHidden')),
+      hiddenCount: 0,
+      sort: {
+        by: /** @type {SortKey} */ (config.get('pane.sortBy')),
+        reverse: /** @type {boolean} */ (config.get('pane.sortReverse')),
+        directoriesFirst: /** @type {boolean} */ (config.get('pane.directoriesFirst')),
+      },
+    });
     this.#history = [this.#uri];
     this.#index = 0;
     // Not awaited: vin starts while the directory is read.
@@ -552,6 +605,89 @@ class Pane extends Handler {
       return entries.filter((entry) => selected.has(entry.name)).map((entry) => entry.name);
     }
     return entries[cursor] ? [entries[cursor].name] : [];
+  }
+
+  /** Lists hidden entries if they aren't, and stops listing them if they are. */
+  toggleHidden() {
+    this.#setHidden(!this.state.showHidden);
+  }
+
+  /** Lists hidden entries, faded. */
+  showHiddenEntries() {
+    this.#setHidden(true);
+  }
+
+  /** Stops listing hidden entries — and unselects them. */
+  hideHiddenEntries() {
+    this.#setHidden(false);
+  }
+
+  /**
+   * Sorts the listing.
+   * @param {SortKey} by
+   * @param {boolean} [reverse] Z to A, largest or newest first. Default: as it is.
+   * @throws {TypeError} If `by` isn't a sort key.
+   */
+  sort(by, reverse = this.state.sort.reverse) {
+    if (!SORT_KEYS.includes(by)) {
+      throw new TypeError(`Expected ${SORT_KEYS.join(', ')}; got ${JSON.stringify(by)}`);
+    }
+    this.#setSort({ by, reverse: reverse === true });
+  }
+
+  /** Sorts the listing the other way round. */
+  reverseSort() {
+    this.#setSort({ reverse: !this.state.sort.reverse });
+  }
+
+  /** Lists directories first, or among everything else. */
+  toggleDirectoriesFirst() {
+    this.#setSort({ directoriesFirst: !this.state.sort.directoriesFirst });
+  }
+
+  /**
+   * The sort menu: a key picks an order at once — its capital the other way round — `r` reverses the one
+   * there is, and `d` puts directories first or not.
+   */
+  async chooseSort() {
+    const { by, reverse, directoriesFirst } = this.state.sort;
+    const choices = SORT_KEYS.flatMap((key) => [false, true].map((backwards) => ({
+      label: describeSort({ by: key, reverse: backwards }),
+      key: backwards ? key[0].toUpperCase() : key[0],
+      value: `${key}${backwards ? ' reverse' : ''}`,
+    })));
+    choices.push(
+      { label: 'Reverse the order', key: 'r', value: 'reverse' },
+      { label: directoriesFirst ? 'Directories among the rest' : 'Directories first', key: 'd', value: 'directories' },
+    );
+    const answer = await this.openWindow(new ChoiceList({
+      title: 'Sort',
+      message: `Now: ${describeSort({ by, reverse })}${directoriesFirst ? ', directories first' : ''}`,
+      choices,
+      selected: SORT_KEYS.indexOf(by) * 2 + Number(reverse),
+    }));
+    if (answer === 'reverse') {
+      this.reverseSort();
+    } else if (answer === 'directories') {
+      this.toggleDirectoriesFirst();
+    } else if (typeof answer === 'string') {
+      const [key, backwards] = answer.split(' ');
+      this.sort(/** @type {SortKey} */ (key), backwards === 'reverse');
+    }
+  }
+
+  /** @param {boolean} show */
+  #setHidden(show) {
+    if (show !== this.state.showHidden) {
+      this.state.showHidden = show;
+      this.#rearrange();
+    }
+  }
+
+  /** @param {Partial<Sort>} changes */
+  #setSort(changes) {
+    this.state.sort = { ...this.state.sort, ...changes };
+    this.#rearrange();
   }
 
   /** Puts the targets on the clipboard, to paste copies of, and ends the selection. */
@@ -1265,9 +1401,16 @@ class Pane extends Handler {
       // The trash shows at the top, over anything real named so.
       ? [...listed.filter((entry) => entry.name !== 'trash'), { name: 'trash', type: /** @type {FileType} */ ('directory'), symlink: false }]
       : listed;
-    const entries = shown
-      .map(({ name, type, symlink }) => ({ name, type, symlink, executable: false, size: null, mtime: null }))
-      .sort(compareEntries);
+    this.#all = shown.map(({ name, type, symlink, hidden }) => ({
+      name,
+      type,
+      symlink,
+      executable: false,
+      size: null,
+      mtime: null,
+      hidden: isHidden({ name, hidden }) && !this.#mounted(uri, name),
+    }));
+    const { entries, hiddenCount } = this.#arrange();
     this.#remember();
     const name = focus ?? this.#positions.get(uri) ?? null;
     const found = name === null ? -1 : entries.findIndex((entry) => entry.name === name);
@@ -1276,9 +1419,34 @@ class Pane extends Handler {
     // The same directory again keeps what's still there selected.
     const kept = new Set(uri === this.state.uri ? this.state.selected : []);
     const selected = entries.filter((entry) => kept.has(entry.name)).map((entry) => entry.name);
-    Object.assign(this.state, { uri, status: 'ready', entries, cursor, selected, range: null });
-    this.#details = this.#fetchDetails(uri, entries, current);
+    Object.assign(this.state, { uri, status: 'ready', entries, hiddenCount, cursor, selected, range: null });
+    this.#details = this.#fetchDetails(uri, this.#all, current);
     return 'listed';
+  }
+
+  /**
+   * The entries to list, from `#all`: without the hidden ones unless they're shown, in the pane's order.
+   * @returns {{ entries: Entry[], hiddenCount: number }}
+   */
+  #arrange() {
+    const { showHidden, sort } = this.state;
+    const shown = showHidden ? this.#all : this.#all.filter((entry) => !entry.hidden);
+    return { entries: [...shown].sort(comparator(sort)), hiddenCount: this.#all.length - shown.length };
+  }
+
+  /**
+   * Lists the directory's entries again, as the view options now say, without reading it: the cursor stays
+   * on its entry — or, if that's hidden now, goes to the nearest one still listed — and so does the
+   * selection, ending any group, less what's hidden now.
+   */
+  #rearrange() {
+    const { entries: before, cursor } = this.state;
+    const selection = this.#selectedNames();
+    const { entries, hiddenCount } = this.#arrange();
+    const index = new Map(entries.map((entry, i) => [entry.name, i]));
+    const near = [...before.slice(cursor), ...before.slice(0, cursor).reverse()].find((entry) => index.has(entry.name));
+    const selected = entries.filter((entry) => selection.has(entry.name)).map((entry) => entry.name);
+    Object.assign(this.state, { entries, hiddenCount, cursor: near ? /** @type {number} */ (index.get(near.name)) : 0, selected, range: null });
   }
 
   /**
@@ -1300,18 +1468,25 @@ class Pane extends Handler {
    * Fetches the entries' details in batches, each batch one update — or, while one is slow to answer (a
    * disconnected network drive takes seconds), one update of what has come every `SLOW_STAT` ms, so it
    * doesn't hold up the rest. An entry that can't be read (gone since, or no permission) keeps none.
+   *
+   * The entries listed come first, in their order, then the hidden ones not listed; once all are in, a
+   * listing sorted by size or time is sorted again.
    * @param {string} uri The directory listed.
-   * @param {Entry[]} entries As listed, in the order shown.
+   * @param {Entry[]} all Its entries (`#all`), which take the details.
    * @param {() => boolean} current Whether this listing is still the latest.
    */
-  async #fetchDetails(uri, entries, current) {
+  async #fetchDetails(uri, all, current) {
+    const byName = new Map(all.map((entry) => [entry.name, entry]));
+    const listed = this.state.entries.map((entry) => /** @type {Entry} */ (byName.get(entry.name)));
+    const shown = new Set(listed);
+    const entries = [...listed, ...all.filter((entry) => !shown.has(entry))];
     for (let start = 0; start < entries.length; start += STAT_BATCH) {
-      /** @type {Map<number, import('../../../fs/file-system').FileStat>} */
+      /** @type {Map<Entry, import('../../../fs/file-system').FileStat>} */
       const arrived = new Map();
       let done = false;
-      const batch = Promise.all(entries.slice(start, start + STAT_BATCH).map((entry, i) => this.fs.stat(childUri(uri, entry.name))
+      const batch = Promise.all(entries.slice(start, start + STAT_BATCH).map((entry) => this.fs.stat(childUri(uri, entry.name))
         .then((stat) => {
-          arrived.set(start + i, stat);
+          arrived.set(entry, stat);
         }, () => {})))
         .then(() => {
           done = true;
@@ -1326,11 +1501,20 @@ class Pane extends Handler {
         if (!current()) {
           return;
         }
-        for (const [index, { size, mtime, executable, free }] of arrived) {
-          Object.assign(this.state.entries[index], { size, mtime, executable }, free === undefined ? {} : { free });
+        const index = new Map(this.state.entries.map((entry, i) => [entry.name, i]));
+        for (const [entry, { size, mtime, executable, free }] of arrived) {
+          const details = { size, mtime, executable, ...(free === undefined ? {} : { free }) };
+          Object.assign(entry, details);
+          const i = index.get(entry.name);
+          if (i !== undefined) {
+            Object.assign(this.state.entries[i], details);
+          }
         }
         arrived.clear();
       }
+    }
+    if (current() && (this.state.sort.by === 'size' || this.state.sort.by === 'modified')) {
+      this.#rearrange();
     }
   }
 }

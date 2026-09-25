@@ -29,6 +29,7 @@
  * @property {boolean} [italic]
  * @property {boolean} [underline]
  * @property {boolean} [inverse] Swaps the text and background colors.
+ * @property {boolean} [dim] Fainter text, keeping its color — where the terminal can (SGR 2).
  */
 
 /**
@@ -55,7 +56,7 @@ const COLOR_NAMES = Object.freeze(
 );
 
 const COLOR_FIELDS = ['fg', 'bg'];
-const FLAG_FIELDS = ['bold', 'italic', 'underline', 'inverse'];
+const FLAG_FIELDS = ['bold', 'italic', 'underline', 'inverse', 'dim'];
 
 /**
  * Whether `value` is a color: a 256-color number, `#rgb`/`#rrggbb`, a name, or `default`.
