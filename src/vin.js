@@ -7,6 +7,7 @@ const { FileSystem } = require('./fs/file-system');
 const { LocalProvider } = require('./fs/local');
 const { Clipboard } = require('./clipboard');
 const { Trash } = require('./trash');
+const { Jobs } = require('./jobs');
 const { TrashProvider } = require('./fs/trash');
 const Handler = require('./handler');
 const Core = require('./handlers/core/core');
@@ -86,6 +87,11 @@ class Vin {
       report: (error) => this.messages.report(error, 'The clipboard failed'),
       realUri: (uri) => this.fs.realUri(uri),
     });
+    /**
+     * Long operations running in the background — as `this.jobs`.
+     * @readonly
+     */
+    this.jobs = new Jobs();
     this.#host = {
       events: this.events,
       windows: this.windows,
@@ -93,6 +99,7 @@ class Vin {
       fs: this.fs,
       clipboard: this.clipboard,
       trash: this.trash,
+      jobs: this.jobs,
       messages: this.messages,
       attach: (handler) => {
         const detach = this.registry.attach(handler);
@@ -102,7 +109,7 @@ class Vin {
         };
       },
     };
-    this.register(new Core(this.registry, this.windows, this.messages));
+    this.register(new Core(this.registry, this.windows, this.messages, this.jobs));
   }
 
   /**

@@ -143,6 +143,33 @@ test('link creates symlinks to the entries', async (t) => {
   assert.deepEqual(read(path.join(dir, 'to', 'd')), { x: 'x' });
 });
 
+test('a transfer tells how it goes in bytes, against the total size added up meanwhile', async (t) => {
+  const { uri } = tempDir(t, { a: 'aaa', d: { b: 'bb', e: { c: 'c' } }, to: {} });
+  /** @type {import('./operations').Progress[]} */
+  const reports = [];
+  await transfer(files, { mode: 'copy', sources: [uri('a'), uri('d')], destination: uri('to'), resolve: answering([]).resolve, progress: (progress) => reports.push(progress) });
+  assert.deepEqual(reports[0], { name: 'a', item: 0, done: 0, total: reports[0].total });
+  const last = /** @type {import('./operations').Progress} */ (reports.at(-1));
+  assert.deepEqual([last.name, last.item, last.done], ['d', 2, 6]);
+  assert.ok(last.total === 6 || last.total === null, `total ${last.total}`);
+  assert.ok(reports.some((progress) => progress.name === 'd' && progress.item === 1));
+});
+
+test('an aborted signal cancels a transfer, leaving what was done', async (t) => {
+  const { dir, uri } = tempDir(t, { a: 'a', b: 'b', to: {} });
+  const controller = new AbortController();
+  const outcome = await transfer(files, {
+    mode: 'copy',
+    sources: [uri('a'), uri('b')],
+    destination: uri('to'),
+    resolve: answering([]).resolve,
+    signal: controller.signal,
+    progress: ({ done }) => done > 0 && controller.abort(),
+  });
+  assert.deepEqual([outcome.created, outcome.cancelled, outcome.failures], [['a'], true, []]);
+  assert.deepEqual(read(path.join(dir, 'to')), { a: 'a' });
+});
+
 test('freeName numbers a name before its extension; within tells a path inside another', async (t) => {
   const { uri } = tempDir(t, { 'a.txt': '', 'a (2).txt': '', '.rc': '' });
   assert.equal(await freeName(files, uri(), 'a.txt', false), 'a (3).txt');

@@ -251,6 +251,15 @@ class Handler {
   }
 
   /**
+   * Long operations, run in the background with progress and cancel (`src/jobs.js`).
+   * @returns {InstanceType<typeof import('./jobs').Jobs>}
+   * @throws {Error} If this handler's tree isn't registered with `Vin`.
+   */
+  get jobs() {
+    return this.#host('run jobs').jobs;
+  }
+
+  /**
    * Shows the user a message, until their next key press: `this.notify('3 files copied')`.
    * @param {string} text
    * @param {import('./messages').MessageLevel} [level] Default: `info`.

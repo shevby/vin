@@ -1,6 +1,7 @@
 const Handler = require('../../handler');
 const { paths } = require('../../paths');
 const Pane = require('./pane/pane');
+const JobList = require('../jobs/jobs');
 const { same } = require('./pane/operations');
 
 /** @typedef {'left' | 'right'} Side */
@@ -15,6 +16,7 @@ const SIDES = ['left', 'right'];
  *
  * Entries go from the active pane straight to the other's directory (2.7): `copyToOther` and
  * `moveToOther`. When a pane's operation changes the directory the other shows, the other reloads.
+ * `showJobs` opens the jobs window (2.10).
  * @extends {Handler<{ active: Side, singlePane: boolean }>}
  */
 class Main extends Handler {
@@ -29,6 +31,7 @@ class Main extends Handler {
       { method: 'split', title: 'Show both panes', description: 'Shows both panes side by side' },
       { method: 'copyToOther', title: 'Copy to the other pane', description: "Copies the active pane's entries to the other pane's directory" },
       { method: 'moveToOther', title: 'Move to the other pane', description: "Moves the active pane's entries to the other pane's directory" },
+      { method: 'showJobs', title: 'Show the jobs', description: 'Lists the copies, moves and deletions running, and those just over, to cancel one' },
     ],
     keybindings: [
       { key: 'tab', command: 'main.switchPane' },
@@ -41,6 +44,7 @@ class Main extends Handler {
       { key: 'ctrl+w v', command: 'main.split' },
       { key: 'y p', command: 'main.copyToOther' },
       { key: 'd p', command: 'main.moveToOther' },
+      { key: 't', command: 'main.showJobs' },
     ],
     configuration: [
       {
@@ -130,6 +134,14 @@ class Main extends Handler {
    */
   split() {
     this.state.singlePane = false;
+  }
+
+  /**
+   * Opens the jobs window, over the panes, until it's closed.
+   * @returns {Promise<void>}
+   */
+  async showJobs() {
+    await this.openWindow(new JobList());
   }
 }
 

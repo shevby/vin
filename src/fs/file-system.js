@@ -55,6 +55,16 @@ const { paths } = require('../paths');
  */
 
 /**
+ * For a long copy or move (2.10).
+ * @typedef {object} TransferOptions
+ * @property {boolean} [overwrite] As in `OverwriteOptions`.
+ * @property {AbortSignal} [signal] Stops it: the provider fails with an abort as soon as it can, leaving
+ *   what's done — minus a file half copied, and a tree half moved across drives, which stays where it was.
+ * @property {(bytes: number) => void} [progress] Gets the bytes of file content copied since its last call.
+ *   A rename that moves nothing says nothing.
+ */
+
+/**
  * The interface a protocol implements. Every method takes absolute URIs of its own scheme.
  * - `createDirectory` (unless `recursive`), `writeFile`, and `createWriteStream` need the parent to exist
  *   (`ENOENT`).
@@ -73,8 +83,8 @@ const { paths } = require('../paths');
  * @property {(uri: string, data: Uint8Array | string, options?: OverwriteOptions) => Promise<void>} writeFile
  *   A string is written as UTF-8.
  * @property {(uri: string, options?: { recursive?: boolean }) => Promise<void>} delete
- * @property {(from: string, to: string, options?: OverwriteOptions) => Promise<void>} rename
- * @property {(from: string, to: string, options?: OverwriteOptions) => Promise<void>} [copy]
+ * @property {(from: string, to: string, options?: TransferOptions) => Promise<void>} rename
+ * @property {(from: string, to: string, options?: TransferOptions) => Promise<void>} [copy]
  * @property {(uri: string, target: string) => Promise<void>} [createSymlink] Creates a symlink at `uri` to
  *   `target`, a URI of the same provider; the link holds the target's absolute path. Fails with `EEXIST` if
  *   anything is at `uri`.
@@ -276,7 +286,7 @@ class FileSystem {
   async copy(from, to, options) {
     const pair = this.#same(from, to, 'copy');
     if (!pair.provider.copy) {
-      // Streaming within one provider joins streaming between providers, in 2.10 and 5.5.
+      // Streaming within one provider joins streaming between providers, in 5.5.
       throw fsError('ENOSYS', "This file system can't copy yet", { path: from, dest: to });
     }
     return pair.provider.copy(pair.from, pair.to, options);

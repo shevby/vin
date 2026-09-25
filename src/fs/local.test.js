@@ -185,6 +185,32 @@ test('rename and copy move whole trees, overwrite only when asked, and keep time
   await rejectsWith(local.rename(uri('missing'), uri('x')), 'ENOENT');
 });
 
+test('copy tells the bytes copied, a big file in chunks, and a cancel removes the file half copied', async (t) => {
+  const { dir, uri } = tempDir(t);
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src', 'big'), Buffer.alloc(9 * 1024 * 1024, 7));
+  fs.writeFileSync(path.join(dir, 'src', 'small'), 'small');
+  /** @type {number[]} */
+  const chunks = [];
+  await local.copy(uri('src'), uri('copy'), { progress: (bytes) => chunks.push(bytes) });
+  assert.equal(chunks.reduce((sum, bytes) => sum + bytes, 0), 9 * 1024 * 1024 + 5);
+  assert.ok(chunks.length >= 9, `${chunks.length} reports`);
+  assert.equal(fs.statSync(path.join(dir, 'copy', 'big')).size, 9 * 1024 * 1024);
+  const controller = new AbortController();
+  let copied = 0;
+  const cancelled = local.copy(uri('src', 'big'), uri('half'), {
+    signal: controller.signal,
+    progress: (bytes) => {
+      copied += bytes;
+      if (copied >= 2 * 1024 * 1024) {
+        controller.abort();
+      }
+    },
+  });
+  await assert.rejects(cancelled, { name: 'AbortError' });
+  assert.equal(fs.existsSync(path.join(dir, 'half')), false);
+});
+
 test("changing a name's case is a rename, even where the file system ignores case", async (t) => {
   const { dir, uri } = tempDir(t);
   fs.writeFileSync(path.join(dir, 'name'), 'kept');

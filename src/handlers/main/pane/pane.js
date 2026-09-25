@@ -618,11 +618,22 @@ class Pane extends Handler {
     const inTrash = this.trash.contains(here);
     if (permanent !== true && this.trash.enabled && !inTrash) {
       await this.fs.createDirectory(TRASH_URI, { recursive: true });
-      const outcome = await transfer(this.fs, { mode: 'move', sources: uris, destination: TRASH_URI, resolve: async () => ({ action: 'keepBoth', all: true }) });
-      outcome.failures.forEach((error) => this.report(error));
-      outcome.created.forEach((name, i) => this.trash.record(childUri(TRASH_URI, name), outcome.done[i]));
+      const outcome = await this.jobs.run({ mode: 'move', name: names[0], destination: paths.displayUri(TRASH_URI), items: uris.length }, async (job) => {
+        const result = await transfer(this.fs, {
+          mode: 'move',
+          sources: uris,
+          destination: TRASH_URI,
+          resolve: async () => ({ action: 'keepBoth', all: true }),
+          signal: job.signal,
+          progress: (progress) => job.progress(progress),
+        });
+        result.created.forEach((name, i) => this.trash.record(childUri(TRASH_URI, name), result.done[i]));
+        job.end(`Moved ${describe(result.created)} to the trash${result.cancelled ? ', cancelled the rest' : ''}`, result.failures.length > 0);
+        return result;
+      });
+      outcome?.failures.forEach((error) => this.report(error));
       await this.#changed([here, TRASH_URI], null);
-      if (outcome.created.length) {
+      if (outcome?.created.length) {
         this.notify(`Moved ${describe(names.length === outcome.created.length ? names : outcome.created)} to the trash`);
       }
       return;
@@ -638,7 +649,7 @@ class Pane extends Handler {
         return;
       }
     }
-    const deleted = await this.#deleteForGood(uris);
+    const deleted = await this.#deleteForGood(uris, here);
     await this.#changed([here], null);
     if (deleted.length) {
       this.notify(`Deleted ${describe(deleted.map((uri) => names[uris.indexOf(uri)]))}`);
@@ -670,20 +681,36 @@ class Pane extends Handler {
     this.#select([]);
     /** @type {string[]} */
     const restored = [];
-    for (const [directory, sources] of groups) {
-      try {
-        await this.fs.createDirectory(directory, { recursive: true });
-      } catch (error) {
-        this.report(error);
-        continue;
-      }
-      const outcome = await transfer(this.fs, { mode: 'move', sources, destination: directory, resolve: (conflict) => this.#ask('move', conflict) });
-      outcome.failures.forEach((error) => this.report(error));
-      this.trash.forget(outcome.done);
-      restored.push(...outcome.created);
-      if (outcome.cancelled) {
-        break;
-      }
+    const count = [...groups.values()].reduce((sum, sources) => sum + sources.length, 0);
+    if (count) {
+      await this.jobs.run({ mode: 'restore', name: [...groups.values()][0][0].name, items: count, unit: 'items', total: count }, async (job) => {
+        let before = 0;
+        for (const [directory, sources] of groups) {
+          job.progress({ destination: paths.displayUri(directory) });
+          try {
+            await this.fs.createDirectory(directory, { recursive: true });
+          } catch (error) {
+            this.report(error);
+            continue;
+          }
+          const outcome = await transfer(this.fs, {
+            mode: 'move',
+            sources,
+            destination: directory,
+            resolve: (conflict) => job.ask(() => this.#ask('move', conflict, job.signal)),
+            signal: job.signal,
+            progress: ({ name, item }) => job.progress({ name, item: before + item, done: before + item }),
+          });
+          before += sources.length;
+          outcome.failures.forEach((error) => this.report(error));
+          this.trash.forget(outcome.done);
+          restored.push(...outcome.created);
+          if (outcome.cancelled) {
+            break;
+          }
+        }
+        job.end(restored.length ? `Restored ${describe(restored)}` : 'Restored nothing', restored.length < count && !job.signal.aborted);
+      });
     }
     await this.#changed([here, ...groups.keys()], null);
     if (restored.length) {
@@ -709,28 +736,37 @@ class Pane extends Handler {
         return;
       }
     }
-    const deleted = await this.#deleteForGood(uris);
+    const deleted = await this.#deleteForGood(uris, TRASH_URI);
     await this.#changed([TRASH_URI], null);
     this.notify(deleted.length === uris.length ? 'Emptied the trash' : `Deleted ${deleted.length} of ${uris.length} items in the trash`);
   }
 
   /**
-   * Deletes entries for good — whole trees — reporting each that fails; entries in the trash leave its
-   * records.
+   * Deletes entries for good — whole trees — as a job, reporting each that fails; entries in the trash
+   * leave its records. A cancel stops it between entries.
    * @param {string[]} uris
+   * @param {string} directory Where they are.
    * @returns {Promise<string[]>} The ones deleted.
    */
-  async #deleteForGood(uris) {
+  async #deleteForGood(uris, directory) {
     /** @type {string[]} */
     const deleted = [];
-    for (const uri of uris) {
-      try {
-        await this.fs.delete(uri, { recursive: true });
-        deleted.push(uri);
-      } catch (error) {
-        this.report(error);
+    const name = (/** @type {string} */ uri) => parentUri(uri)?.name ?? paths.displayUri(uri);
+    await this.jobs.run({ mode: 'delete', name: name(uris[0]), destination: paths.displayUri(directory), items: uris.length, unit: 'items', total: uris.length }, async (job) => {
+      for (const [i, uri] of uris.entries()) {
+        if (job.signal.aborted) {
+          break;
+        }
+        job.progress({ name: name(uri), item: i, done: i });
+        try {
+          await this.fs.delete(uri, { recursive: true });
+          deleted.push(uri);
+        } catch (error) {
+          this.report(error);
+        }
       }
-    }
+      job.end(`Deleted ${deleted.length === 1 ? name(deleted[0]) : `${deleted.length} of ${uris.length} items`}`, deleted.length < uris.length && !job.signal.aborted);
+    });
     const trashed = deleted.filter((uri) => this.trash.contains(uri));
     if (trashed.length) {
       this.trash.forget(trashed);
@@ -972,13 +1008,42 @@ class Pane extends Handler {
    */
   async #transfer(mode, uris, destination) {
     this.#files(destination);
-    const outcome = await transfer(this.fs, { mode, sources: uris, destination, resolve: (conflict) => this.#ask(mode, conflict) });
+    const result = await this.jobs.run({ mode, name: parentUri(uris[0])?.name ?? '', destination: paths.displayUri(destination), items: uris.length }, async (job) => {
+      const done = await transfer(this.fs, {
+        mode,
+        sources: uris,
+        destination,
+        resolve: (conflict) => job.ask(() => this.#ask(mode, conflict, job.signal)),
+        signal: job.signal,
+        progress: (progress) => job.progress(progress),
+      });
+      job.end(this.#summary(mode, done, destination).join(', ') || 'Nothing done', done.failures.length > 0);
+      return done;
+    });
+    /** @type {import('./operations').Outcome} */
+    const outcome = result ?? { created: [], done: [], skipped: 0, failures: [], cancelled: true };
     outcome.failures.forEach((error) => this.report(error));
     const sources = mode === 'move' ? uris.map((uri) => parentUri(uri)?.uri).filter((uri) => uri !== undefined) : [];
     const here = same(destination, this.state.uri);
     await this.#changed([destination, ...sources], here ? outcome.created[0] ?? null : null);
+    const parts = this.#summary(mode, outcome, destination);
+    if (parts.length) {
+      this.notify(parts.join(', '));
+    }
+    return outcome;
+  }
+
+  /**
+   * What a transfer did, in words.
+   * @param {Mode} mode
+   * @param {import('./operations').Outcome} outcome
+   * @param {string} destination
+   * @returns {string[]} Parts to join with commas, the first one capitalized.
+   */
+  #summary(mode, outcome, destination) {
     const parts = [];
     if (outcome.created.length) {
+      const here = same(destination, this.state.uri);
       parts.push(`${VERBS[mode].done} ${describe(outcome.created)}${here ? '' : ` to ${paths.displayUri(destination)}`}`);
     }
     if (outcome.skipped) {
@@ -988,19 +1053,23 @@ class Pane extends Handler {
       parts.push('cancelled the rest');
     }
     if (parts.length) {
-      const text = parts.join(', ');
-      this.notify(text[0].toUpperCase() + text.slice(1));
+      parts[0] = parts[0][0].toUpperCase() + parts[0].slice(1);
     }
-    return outcome;
+    return parts;
   }
 
   /**
-   * Asks what to do about a name taken at the destination.
+   * Asks what to do about a name taken at the destination — until the job is cancelled, which closes the
+   * question.
    * @param {Mode} mode
    * @param {Conflict} conflict
+   * @param {AbortSignal} signal
    * @returns {Promise<Resolution>}
    */
-  async #ask(mode, { name, directory, merge }) {
+  async #ask(mode, { name, directory, merge }, signal) {
+    if (signal.aborted) {
+      return { action: 'cancel' };
+    }
     const replace = merge ? 'Merge' : 'Overwrite';
     const key = merge ? 'm' : 'o';
     const choices = [
@@ -1012,13 +1081,23 @@ class Pane extends Handler {
       { label: 'Keep both for all', key: 'B', value: 'keepBoth all' },
       { label: 'Cancel', key: 'c', value: 'cancel', description: 'Stop here' },
     ];
-    const answer = await this.openWindow(new ChoiceList({
+    const question = new ChoiceList({
       title: VERBS[mode].doing,
       message: `${name} is already in ${paths.displayUri(directory)}`,
       choices,
       // Enter on the safe answer.
       selected: 2,
-    }));
+    });
+    const dismiss = () => {
+      question.close(null).catch(() => {});
+    };
+    signal.addEventListener('abort', dismiss, { once: true });
+    let answer;
+    try {
+      answer = await this.openWindow(question);
+    } finally {
+      signal.removeEventListener('abort', dismiss);
+    }
     if (typeof answer !== 'string') {
       return { action: 'cancel' };
     }

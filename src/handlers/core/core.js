@@ -1,6 +1,7 @@
 const Handler = require('../../handler');
 const { chordText, isChord } = require('../../keys');
 const { KeySequencer } = require('../../keymap');
+const Confirm = require('../confirm/confirm');
 
 /**
  * @typedef {import('../../state').Data} Data
@@ -10,6 +11,8 @@ const { KeySequencer } = require('../../keymap');
  * @typedef {InstanceType<typeof import('../../messages').Messages>} Messages
  * @typedef {import('../../messages').Message} Message
  * @typedef {import('../../colors').Style} Style
+ * @typedef {InstanceType<typeof import('../../jobs').Jobs>} Jobs
+ * @typedef {import('../../jobs').JobInfo} JobInfo
  */
 
 /**
@@ -24,9 +27,10 @@ const { KeySequencer } = require('../../keymap');
  * - `messages` lists the messages to show (`src/messages.js`), until the next key press clears them.
  * - `colors` is the color scheme (`src/colors.js`): every declared group's style, by id, with the user's
  *   changes. It declares the groups every window shares; the rest come from the kinds that draw them.
- * - `quitting` turns `true` when vin should exit (`quit`); the UI then closes, and `Vin#start` disposes
- *   the handlers.
- * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[], colors: { [id: string]: Style }, quitting: boolean }>}
+ * - `jobs` lists the long operations (`src/jobs.js`), running first, with their progress.
+ * - `quitting` turns `true` when vin should exit (`quit`) — after asking, while jobs run; the UI then
+ *   closes, and `Vin#start` disposes the handlers.
+ * @extends {Handler<{ contributions: { [point: string]: Data[] }, windows: WindowInfo[], pendingKeys: string, messages: Message[], jobs: JobInfo[], colors: { [id: string]: Style }, quitting: boolean }>}
  */
 class Core extends Handler {
   static kind = 'core';
@@ -59,6 +63,9 @@ class Core extends Handler {
       { key: 'highlight', default: { bold: true, inverse: true }, description: 'The highlighted button or choice (vifm: CurrLine).' },
       { key: 'hotkey', default: { fg: 74 }, description: "A choice's own key, in choice lists." },
       { key: 'hint', default: { fg: 244 }, description: 'Secondary text: descriptions, "Press any key" (vifm: LineNr).' },
+      { key: 'jobLine', default: { fg: 71, bg: 235, bold: true }, description: 'What a running job does, in the strip above the message line (vifm: JobLine).' },
+      { key: 'progress', default: { fg: 71 }, description: "The done part of a progress bar (vifm: JobLine's color)." },
+      { key: 'progressTrack', default: { fg: 238 }, description: 'The rest of a progress bar.' },
       { key: 'cursor', default: { inverse: true }, description: 'The cursor in a text field.' },
       { key: 'error', default: { fg: 160, bold: true }, description: 'Error messages (vifm: ErrorMsg).' },
       { key: 'warning', default: { fg: 173, bold: true }, description: 'Warnings.' },
@@ -76,17 +83,21 @@ class Core extends Handler {
   #messages;
   /** @type {InstanceType<typeof KeySequencer>} */
   #keys;
+  /** @type {Jobs | null} */
+  #jobs;
 
   /**
    * @param {Registry} registry
    * @param {WindowStack} windows
    * @param {Messages} messages
+   * @param {Jobs | null} [jobs] Mirrored in `state.jobs`; none without.
    */
-  constructor(registry, windows, messages) {
+  constructor(registry, windows, messages, jobs = null) {
     super('core');
     this.#registry = registry;
     this.#windows = windows;
     this.#messages = messages;
+    this.#jobs = jobs;
     this.#keys = new KeySequencer({
       candidates: (focus) =>
         registry.activeKeybindings(focus, windows.top?.path).map(({ binding, command, handler, depth }) => ({
@@ -114,6 +125,7 @@ class Core extends Handler {
       windows: windows.windows,
       pendingKeys: '',
       messages: messages.list,
+      jobs: this.#jobs?.list ?? [],
       colors: this.#colors(),
       quitting: false,
     });
@@ -137,6 +149,12 @@ class Core extends Handler {
         this.state.messages = messages.list;
       }),
     );
+    const jobs = this.#jobs;
+    if (jobs) {
+      this.#unsubscribe.push(jobs.subscribe(() => {
+        this.state.jobs = jobs.list;
+      }));
+    }
   }
 
   /**
@@ -242,8 +260,26 @@ class Core extends Handler {
     return this.#windows.closeTop();
   }
 
-  /** Asks the UI to exit (`quitting`); once it has, `Vin#start` disposes the handlers and returns. */
-  quit() {
+  /**
+   * Asks the UI to exit (`quitting`); once it has, `Vin#start` disposes the handlers and returns. While
+   * jobs run, it asks first, and cancels them.
+   * @returns {Promise<void>}
+   */
+  async quit() {
+    const running = this.#jobs?.running ?? 0;
+    if (running) {
+      const confirmed = await this.openWindow(new Confirm({
+        title: 'Quit',
+        message: `${running === 1 ? 'A job is' : `${running} jobs are`} still running. Cancel ${running === 1 ? 'it' : 'them'} and quit?`,
+        yes: 'Quit',
+        no: 'Stay',
+        initial: 'no',
+      }));
+      if (confirmed !== true) {
+        return;
+      }
+      await this.#jobs?.cancelAll();
+    }
     this.state.quitting = true;
   }
 }

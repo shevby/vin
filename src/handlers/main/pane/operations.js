@@ -2,6 +2,7 @@ const nodePath = require('node:path');
 const { childUri, parentUri } = require('../../../fs/file-system');
 const { paths } = require('../../../paths');
 const { failure } = require('../../../errors');
+const { isAbort } = require('../../../jobs');
 
 /**
  * Copying, moving and linking entries into a directory (2.7), with what to do about a name already there
@@ -9,6 +10,10 @@ const { failure } = require('../../../errors');
  *
  * A directory onto a directory is merged when overwriting: its entries go in one by one, each conflict
  * asked about in turn, as Explorer does, instead of replacing the whole directory.
+ *
+ * Run as a job (2.10), a transfer tells how it goes (`progress`) in bytes, against the entries' total size,
+ * added up meanwhile (`measure()`) — so a move that only renames needn't wait for it — and stops when its
+ * `signal` is aborted, with `cancelled` set.
  */
 
 /**
@@ -52,7 +57,18 @@ const { failure } = require('../../../errors');
  * @property {string[]} done The URIs of the entries done, as given — `created[i]` is `done[i]`'s new name.
  * @property {number} skipped Entries left alone: skipped, or moved where they already are.
  * @property {unknown[]} failures An error for each entry that failed; the others went on.
- * @property {boolean} cancelled Whether a conflict was answered with `cancel`, stopping the rest.
+ * @property {boolean} cancelled Whether a conflict was answered with `cancel`, or the signal aborted,
+ *   stopping the rest.
+ */
+
+/**
+ * How a transfer is going, in bytes: `name` is the top-level entry it's on, `item` how many it has done.
+ * `total` is `null` until the sizes are added up.
+ * @typedef {object} Progress
+ * @property {string} name
+ * @property {number} item
+ * @property {number} done
+ * @property {number | null} total
  */
 
 /** Thrown to stop a transfer when a conflict is answered with `cancel`. */
@@ -72,6 +88,34 @@ async function statOrNull(fs, uri) {
     }
     throw error;
   }
+}
+
+/** Entries `measure()` stats at once. */
+const MEASURE_BATCH = 64;
+
+/**
+ * The size of an entry — a directory's is its files', at any depth; a symlink counts as nothing.
+ * @param {FileSystem} fs
+ * @param {string} uri
+ * @param {AbortSignal} signal Stops it, with an abort.
+ * @returns {Promise<number>} In bytes.
+ */
+async function measure(fs, uri, signal) {
+  signal.throwIfAborted();
+  const stat = await fs.stat(uri);
+  if (stat.symlink) {
+    return 0;
+  }
+  if (stat.type !== 'directory') {
+    return stat.size;
+  }
+  const entries = await fs.readDirectory(uri);
+  let size = 0;
+  for (let i = 0; i < entries.length; i += MEASURE_BATCH) {
+    const sizes = await Promise.all(entries.slice(i, i + MEASURE_BATCH).map((entry) => measure(fs, childUri(uri, entry.name), signal)));
+    size += sizes.reduce((sum, one) => sum + one, 0);
+  }
+  return size;
 }
 
 /**
@@ -155,13 +199,46 @@ function same(a, b) {
  *   them, as restoring from the trash does.
  * @param {string} options.destination The directory's URI.
  * @param {Resolve} options.resolve
+ * @param {AbortSignal} [options.signal] Cancels the rest.
+ * @param {(progress: Progress) => void} [options.progress] Called often.
  * @returns {Promise<Outcome>}
  */
-async function transfer(fs, { mode, sources, destination, resolve }) {
+async function transfer(fs, { mode, sources, destination, resolve, signal, progress }) {
   /** @type {Outcome} */
   const outcome = { created: [], done: [], skipped: 0, failures: [], cancelled: false };
   /** @type {Action | null} */
   let policy = null;
+  const items = sources.map((item) => (typeof item === 'string' ? { uri: item, name: parentUri(item)?.name } : item));
+
+  // Progress: bytes of the entries done — their sizes once known, else the bytes copied for them — plus
+  // the one under way.
+  let item = 0;
+  let current = 0;
+  let finished = 0;
+  /** @type {number[]} Bytes copied for each entry done. */
+  const copied = [];
+  /** @type {number[] | null} */
+  let sizes = null;
+  /** @type {number | null} */
+  let total = null;
+  const measuring = new AbortController();
+  const report = () => progress?.({ name: (items[item] ?? items.at(-1))?.name ?? '', item, done: finished + current, total });
+  if (progress && mode !== 'link') {
+    Promise.all(items.map(({ uri }) => measure(fs, uri, measuring.signal).catch((error) => (isAbort(error) ? Promise.reject(error) : 0))))
+      .then((measured) => {
+        sizes = measured;
+        total = measured.reduce((sum, size) => sum + size, 0);
+        finished = copied.reduce((sum, _, i) => sum + measured[i], 0);
+        report();
+      })
+      .catch(() => {});
+  }
+  /** @param {number} bytes */
+  const count = (bytes) => {
+    current += bytes;
+    report();
+  };
+  const options = { signal, progress: progress && count };
 
   /** @param {Conflict} conflict */
   const decide = async (conflict) => {
@@ -186,6 +263,7 @@ async function transfer(fs, { mode, sources, destination, resolve }) {
    * @returns {Promise<string | null>} The name it has there, or `null` if left alone.
    */
   const one = async (source, directory, name) => {
+    signal?.throwIfAborted();
     const from = parentUri(source);
     const home = from !== null && same(from.uri, directory);
     if (mode === 'move' && home) {
@@ -216,9 +294,9 @@ async function transfer(fs, { mode, sources, destination, resolve }) {
       }
     }
     if (mode === 'copy') {
-      await fs.copy(source, target, { overwrite });
+      await fs.copy(source, target, { overwrite, ...options });
     } else if (mode === 'move') {
-      await fs.rename(source, target, { overwrite });
+      await fs.rename(source, target, { overwrite, ...options });
     } else {
       if (overwrite) {
         await fs.delete(target, { recursive: true });
@@ -241,7 +319,7 @@ async function transfer(fs, { mode, sources, destination, resolve }) {
           outcome.skipped++;
         }
       } catch (error) {
-        if (error === CANCEL) {
+        if (error === CANCEL || (signal?.aborted && isAbort(error))) {
           throw error;
         }
         outcome.failures.push(error);
@@ -258,29 +336,37 @@ async function transfer(fs, { mode, sources, destination, resolve }) {
     }
   };
 
-  for (const item of sources) {
-    const source = typeof item === 'string' ? item : item.uri;
-    const name = typeof item === 'string' ? parentUri(source)?.name : item.name;
-    try {
-      if (name === undefined) {
-        throw failure(`Can't ${mode} ${paths.displayUri(source)}: it's a root`);
+  try {
+    for (; item < items.length; item++) {
+      const { uri: source, name } = items[item];
+      report();
+      try {
+        if (name === undefined) {
+          throw failure(`Can't ${mode} ${paths.displayUri(source)}: it's a root`);
+        }
+        const created = await one(source, destination, name);
+        if (created === null) {
+          outcome.skipped++;
+        } else {
+          outcome.created.push(created);
+          outcome.done.push(source);
+        }
+      } catch (error) {
+        if (error === CANCEL || (signal?.aborted && isAbort(error))) {
+          outcome.cancelled = true;
+          break;
+        }
+        outcome.failures.push(error);
       }
-      const created = await one(source, destination, name);
-      if (created === null) {
-        outcome.skipped++;
-      } else {
-        outcome.created.push(created);
-        outcome.done.push(source);
-      }
-    } catch (error) {
-      if (error === CANCEL) {
-        outcome.cancelled = true;
-        break;
-      }
-      outcome.failures.push(error);
+      copied.push(current);
+      finished += sizes ? sizes[item] : current;
+      current = 0;
     }
+    report();
+  } finally {
+    measuring.abort();
   }
   return outcome;
 }
 
-module.exports = { transfer, freeName, within, same, statOrNull };
+module.exports = { transfer, measure, freeName, within, same, statOrNull };

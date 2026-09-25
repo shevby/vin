@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Box, Text, useApp, useWindowSize } from 'ink';
+import { JobStrip } from './common/jobs/index.js';
 import { useKeybindings } from './common/keys/index.js';
 import { MessageLine, MessagePopup } from './common/messages/index.js';
 import { useSelector } from './common/store/index.js';
@@ -9,8 +10,8 @@ import { init } from './handler.js';
 import { windows } from './windows.js';
 
 /**
- * Root TUI component: the open windows over the whole terminal, with the message line below them and the
- * message popup over everything, all in the color scheme (`core.window`'s background fills the screen).
+ * Root TUI component: the open windows over the whole terminal, with the running jobs and then the message
+ * line below them, and the message popup over everything, all in the color scheme (`core.window`'s background fills the screen).
  * It exits once the backend asks to (`core`'s `quitting`). It reaches the backend only through handles
  * from `./handler.js`.
  * @param {object} props
@@ -54,6 +55,7 @@ function Screen({ components }) {
           </Box>
         </Windows>
       </Box>
+      <JobStrip columns={columns} />
       <MessageLine columns={columns} />
       <MessagePopup columns={columns} rows={height} />
     </Box>

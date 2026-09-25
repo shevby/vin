@@ -118,6 +118,33 @@ test('z z asks the UI to quit, from any window', async () => {
   assert.equal(core.state.quitting, true);
 });
 
+test('z z while jobs run asks first; quitting cancels them, and waits for them to stop', async () => {
+  const { vin, press } = await setup();
+  const core = vin.resolve('core');
+  let stopped = false;
+  const job = vin.jobs.run({ mode: 'copy' }, (control) => new Promise((resolve) => {
+    control.signal.addEventListener('abort', () => setTimeout(() => {
+      stopped = true;
+      resolve(undefined);
+    }, 10));
+  }));
+  await press('z z', 'main.left');
+  assert.equal(vin.windows.focused?.kind, 'confirm');
+  assert.equal(core.state.quitting, false);
+  await vin.call('core.press', 'enter');
+  await tick();
+  assert.equal(vin.windows.focused?.kind, 'pane', 'Stay is the default');
+  await press('z z', 'main.left');
+  await vin.call('core.press', 'y');
+  await tick();
+  assert.equal(core.state.quitting, false, 'not before the job stops');
+  await job;
+  await tick();
+  assert.equal(stopped, true);
+  assert.equal(core.state.quitting, true);
+  assert.equal(vin.jobs.list[0].status, 'cancelled');
+});
+
 test('sequences show their pending keys in core state', async () => {
   const { vin, press } = await setup();
   /** @type {string[]} */

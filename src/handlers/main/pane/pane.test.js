@@ -430,6 +430,35 @@ test('selected entries go together, and the selection ends; a name taken is aske
   assert.deepEqual(messages(), [`Moved 2 items to ${paths.display(path.join(dir, 'to'))}, skipped 1`]);
 });
 
+test('operations run as jobs, which say what they did', async (t) => {
+  const dir = tempDir(t, { to: null, a: 'a', b: 'b' });
+  const { vin, pane, press } = await openWindow(dir, '{ pane: { confirmDelete: false } }');
+  await press('j v v');
+  await pane.copyTo('to');
+  await pane.delete();
+  // Each named after the entry it was on last.
+  assert.deepEqual(vin.jobs.list.map(({ mode, name, destination, items, status, summary }) => ({ mode, name, destination, items, status, summary })), [
+    { mode: 'copy', name: 'b', destination: paths.display(path.join(dir, 'to')), items: 2, status: 'done', summary: `Copied 2 items to ${paths.display(path.join(dir, 'to'))}` },
+    { mode: 'delete', name: 'b', destination: paths.display(dir), items: 1, status: 'done', summary: 'Deleted b' },
+  ]);
+});
+
+test('cancelling a job while it asks about a conflict closes the question, and stops the rest', async (t) => {
+  const dir = tempDir(t, { to: null, a: 'new a', b: 'b' });
+  fs.writeFileSync(path.join(dir, 'to', 'a'), 'old a');
+  const { vin, pane, press, focus, messages } = await openWindow(dir);
+  await press('j v v');
+  const moved = pane.moveTo('to');
+  await until(() => focus() === 'choiceList', 'a to be asked about');
+  assert.equal(vin.jobs.list[0].status, 'asking');
+  vin.jobs.cancel(vin.jobs.list[0].id);
+  await moved;
+  assert.equal(focus(), 'pane');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['a', 'b', 'to']);
+  assert.equal(vin.jobs.list[0].status, 'cancelled');
+  assert.deepEqual(messages(), ['Cancelled the rest']);
+});
+
 test('delete asks first, on Delete, and deletes for good; the cursor stays on its row', async (t) => {
   const dir = tempDir(t, { d: null, a: '', b: '', c: '' });
   fs.writeFileSync(path.join(dir, 'd', 'inside'), '');
