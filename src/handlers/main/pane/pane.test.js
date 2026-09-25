@@ -329,3 +329,238 @@ test('an entry slow to stat doesn\'t hold up the others\' details', async (t) =>
   await pane.loaded;
   assert.deepEqual(pane.state.entries.map((entry) => entry.size), [1, 2]);
 });
+
+/** Lets queued microtasks and immediates run: state patches, commands started by keys. */
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * Waits for a command started by a key to get somewhere, up to a second.
+ * @param {() => unknown} done
+ * @param {string} what For the failure.
+ */
+async function until(done, what) {
+  for (const start = Date.now(); !done(); await tick()) {
+    if (Date.now() - start > 1000) {
+      assert.fail(`Timed out waiting for ${what}`);
+    }
+  }
+}
+
+/**
+ * A pane showing `dir` as a window, listed, driven by keys as the UI would.
+ * @param {string} dir
+ * @param {string} [config] The config file's text.
+ */
+async function openWindow(dir, config) {
+  const vin = new Vin();
+  const pane = new Pane('pane', { uri: paths.toUri(dir) });
+  vin.register(pane);
+  if (config !== undefined) {
+    vin.config.parse(config, 'config.json5');
+  }
+  await vin.init();
+  await vin.openWindow('pane');
+  await pane.loaded;
+  return {
+    vin,
+    pane,
+    /**
+     * Presses keys, one chord per space-separated item, letting each command run.
+     * @param {string} keys
+     */
+    async press(keys) {
+      for (const chord of keys.split(' ')) {
+        await vin.call('core.press', chord);
+        await tick();
+      }
+    },
+    /**
+     * Types or pastes text, as the UI does with `core.type`.
+     * @param {string} text
+     */
+    async type(text) {
+      await vin.call('core.type', text);
+      await tick();
+    },
+    /** The focused handler's kind — a dialog's, while one is open. */
+    focus: () => vin.windows.focused?.kind ?? null,
+    messages: () => vin.messages.list.map((message) => message.text),
+    /** The entry under the cursor. */
+    current: () => pane.state.entries[pane.state.cursor]?.name,
+  };
+}
+
+test('copy and paste make copies, next to the original in its own directory; cut and paste moves, once', async (t) => {
+  const dir = tempDir(t, { d: null, 'f.txt': 'f' });
+  const { vin, pane, current, messages } = await openWindow(dir);
+  pane.down();
+  pane.copy();
+  assert.deepEqual(vin.clipboard.content, { mode: 'copy', uris: [paths.toUri(path.join(dir, 'f.txt'))] });
+  assert.deepEqual(messages(), ['Copied f.txt — paste to copy it']);
+  await pane.paste();
+  assert.deepEqual(pane.state.entries.map((entry) => entry.name), ['d', 'f (2).txt', 'f.txt']);
+  assert.equal(current(), 'f (2).txt', 'the cursor on what was pasted');
+  pane.cut();
+  await pane.navigate('d');
+  await pane.paste();
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'd')), ['f (2).txt']);
+  assert.equal(vin.clipboard.content, null, 'moved: off the clipboard');
+  await pane.paste();
+  assert.match(messages().at(-1) ?? '', /Nothing to paste/);
+});
+
+test('selected entries go together, and the selection ends; a name taken is asked about', async (t) => {
+  const dir = tempDir(t, { to: null, a: 'new a', b: 'new b', c: 'c' });
+  fs.writeFileSync(path.join(dir, 'to', 'a'), 'old a');
+  fs.writeFileSync(path.join(dir, 'to', 'b'), 'old b');
+  const { pane, press, focus, messages } = await openWindow(dir);
+  await press('j v v v');
+  assert.deepEqual(pane.state.selected, ['a', 'b', 'c']);
+  const moved = pane.moveTo('to');
+  assert.deepEqual(pane.state.selected, []);
+  await until(() => focus() === 'choiceList', 'a to be asked about');
+  await press('o');
+  await until(() => focus() === 'choiceList', 'b to be asked about');
+  await press('enter');
+  await moved;
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['b', 'to']);
+  assert.equal(fs.readFileSync(path.join(dir, 'to', 'a'), 'utf8'), 'new a');
+  assert.equal(fs.readFileSync(path.join(dir, 'to', 'b'), 'utf8'), 'old b', 'Enter skips');
+  assert.deepEqual(messages(), [`Moved 2 items to ${paths.display(path.join(dir, 'to'))}, skipped 1`]);
+});
+
+test('delete asks first, on Delete, and deletes for good; the cursor stays on its row', async (t) => {
+  const dir = tempDir(t, { d: null, a: '', b: '', c: '' });
+  fs.writeFileSync(path.join(dir, 'd', 'inside'), '');
+  const { pane, press, focus, messages, current } = await openWindow(dir);
+  await press('j j');
+  await press('shift+d shift+d');
+  await until(() => focus() === 'confirm', 'the question');
+  await press('escape');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['a', 'b', 'c', 'd'], 'Escape: kept');
+  await press('delete');
+  await until(() => focus() === 'confirm', 'the question');
+  await press('enter');
+  await until(() => current() === 'c', 'the listing');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['a', 'c', 'd']);
+  assert.equal(current(), 'c');
+  assert.deepEqual(messages(), ['Deleted b']);
+  await press('g g v shift+g v delete');
+  await until(() => focus() === 'confirm', 'the question');
+  await press('y');
+  await until(() => pane.state.entries.length === 1, 'the listing');
+  assert.deepEqual(fs.readdirSync(dir), ['a'], 'a directory, with what is inside');
+});
+
+test('with pane.trash, delete moves entries there, keeping both of one name; inside it, and with shift+Delete, deletes for good', async (t) => {
+  const dir = tempDir(t, { work: null, trash: null });
+  const work = path.join(dir, 'work');
+  const trash = path.join(dir, 'trash');
+  fs.writeFileSync(path.join(work, 'a'), 'new');
+  fs.writeFileSync(path.join(work, 'b'), '');
+  fs.writeFileSync(path.join(trash, 'a'), 'old');
+  const { pane, press, focus, messages } = await openWindow(work, `{ pane: { trash: ${JSON.stringify(path.join(trash, 'sub'))}, confirmDelete: false } }`);
+  fs.renameSync(path.join(trash, 'a'), path.join(dir, 'a-old'));
+  await press('delete');
+  assert.equal(focus(), 'pane', 'no question');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(messages(), ['Moved a to the trash']);
+  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')), ['a'], 'created when first needed');
+  fs.writeFileSync(path.join(work, 'a'), 'again');
+  await pane.reload();
+  pane.first();
+  await press('delete');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')).sort(), ['a', 'a (2)']);
+  await press('shift+delete');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(work), []);
+  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')).sort(), ['a', 'a (2)'], 'b: deleted for good');
+  await pane.navigate(path.join(trash, 'sub'));
+  await press('delete');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(path.join(trash, 'sub')), ['a (2)'], 'in the trash: for good');
+});
+
+test('pane.trash must be an absolute path', async (t) => {
+  const dir = tempDir(t, { a: '' });
+  const { press, messages } = await openWindow(dir, `{ pane: { trash: 'relative/trash' } }`);
+  await press('delete');
+  await until(() => messages().length, 'the message');
+  assert.match(messages()[0] ?? '', /^pane\.trash in the config must be an absolute path/);
+  assert.deepEqual(fs.readdirSync(dir), ['a']);
+});
+
+test('rename starts with the name, the cursor before its extension; a name taken is refused until changed', async (t) => {
+  const dir = tempDir(t, { 'notes.txt': '', 'other.txt': '' });
+  const { vin, pane, press, type, focus, current } = await openWindow(dir);
+  await press('c w');
+  await until(() => focus() === 'textField', 'the prompt');
+  const input = /** @type {any} */ (vin.windows.focused);
+  assert.deepEqual([input.state.value, input.state.cursor], ['notes.txt', 5]);
+  await press('ctrl+u');
+  await type('other');
+  await press('enter');
+  await until(() => input.parent.state.error, 'the error');
+  assert.equal(input.parent.state.error, 'other.txt already exists');
+  await press('ctrl+a ctrl+k');
+  await type('Notes.md');
+  await press('enter');
+  await until(() => current() === 'Notes.md', 'the listing');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['Notes.md', 'other.txt']);
+  assert.equal(current(), 'Notes.md');
+  for (const keys of ['c c', 'c a w', 'c i w']) {
+    await press(keys);
+    await until(() => focus() === 'textField', keys);
+    await press('escape');
+  }
+});
+
+test('create makes a file, or a directory for a name ending with /, with the directories on the way', async (t) => {
+  const dir = tempDir(t, { taken: '' });
+  const { vin, press, type, focus, current } = await openWindow(dir);
+  await press('a');
+  await until(() => focus() === 'textField', 'the prompt');
+  await type('taken');
+  await press('enter');
+  await until(() => /** @type {any} */ (vin.windows.focused)?.parent.state.error, 'the error');
+  assert.equal(focus(), 'textField', 'taken: the prompt stays');
+  await press('ctrl+u');
+  await type('src/lib/');
+  await press('enter');
+  await until(() => current() === 'src', 'the listing');
+  await press('a');
+  await until(() => focus() === 'textField', 'the prompt');
+  await type('file.txt');
+  await press('enter');
+  await until(() => current() === 'file.txt', 'the listing');
+  assert.ok(fs.statSync(path.join(dir, 'src', 'lib')).isDirectory());
+  assert.equal(fs.readFileSync(path.join(dir, 'file.txt'), 'utf8'), '');
+  assert.equal(current(), 'file.txt');
+});
+
+test('a paste of paths pastes those entries; vin\'s own cut paths move them; other text is refused', async (t) => {
+  const dir = tempDir(t, { to: null, a: 'a', b: 'b' });
+  const { vin, pane, type, messages } = await openWindow(path.join(dir, 'to'));
+  await type(`"${path.join(dir, 'a')}"`);
+  await until(() => pane.state.entries.length === 1, 'the listing');
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'to')), ['a']);
+  assert.ok(fs.existsSync(path.join(dir, 'a')), 'copied');
+  vin.clipboard.set('cut', [paths.toUri(path.join(dir, 'b'))]);
+  await type(`${path.join(dir, 'b')}\r`);
+  await until(() => pane.state.entries.length === 2, 'the listing');
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'to')).sort(), ['a', 'b']);
+  assert.ok(!fs.existsSync(path.join(dir, 'b')), 'moved');
+  await type('hello');
+  assert.deepEqual(messages(), ['Only paths can be pasted here, one per line']);
+});
+
+test('shift+p pastes symlinks to what is on the clipboard', async (t) => {
+  const dir = tempDir(t, { to: null, d: null });
+  const { vin, pane, press } = await openWindow(path.join(dir, 'to'));
+  vin.clipboard.set('copy', [paths.toUri(path.join(dir, 'd'))]);
+  await press('shift+p');
+  await until(() => pane.state.entries.length === 1, 'the listing');
+  assert.ok(fs.lstatSync(path.join(dir, 'to', 'd')).isSymbolicLink());
+  assert.deepEqual(pane.state.entries.map(({ name, type, symlink }) => ({ name, type, symlink })), [{ name: 'd', type: 'directory', symlink: true }]);
+});

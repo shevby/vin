@@ -3,8 +3,17 @@ const { childUri, parentUri } = require('../../../fs/file-system');
 const { paths } = require('../../../paths');
 const { failure } = require('../../../errors');
 const { opener } = require('../../../open');
+const ChoiceList = require('../../choice-list/choice-list');
+const Confirm = require('../../confirm/confirm');
+const Prompt = require('../../prompt/prompt');
+const { transfer, within, same, statOrNull } = require('./operations');
 
-/** @typedef {import('../../../fs/file-system').FileType} FileType */
+/**
+ * @typedef {import('../../../fs/file-system').FileType} FileType
+ * @typedef {import('./operations').Mode} Mode
+ * @typedef {import('./operations').Conflict} Conflict
+ * @typedef {import('./operations').Resolution} Resolution
+ */
 
 /**
  * One row of the listing. Its details come after the listing itself, from a `stat` of each entry, so a huge
@@ -52,6 +61,38 @@ const HISTORY_SIZE = 100;
 
 /** Directories a pane remembers its cursor in, so coming back puts it where it was. */
 const POSITIONS_SIZE = 1000;
+
+/** How each operation is named, in a conflict's title and in the message after it. */
+const VERBS = /** @type {const} */ ({
+  copy: { doing: 'Copying', done: 'Copied' },
+  move: { doing: 'Moving', done: 'Moved' },
+  link: { doing: 'Linking', done: 'Linked' },
+});
+
+/**
+ * Names in a message: the one name, or how many.
+ * @param {string[]} names
+ * @returns {string}
+ */
+function describe(names) {
+  return names.length === 1 ? names[0] : `${names.length} items`;
+}
+
+/**
+ * What's wrong with a name for a new or renamed entry, if anything: none of the path's separators, and
+ * not `.` or `..`. Characters the file system refuses (`:` on Windows) are its to report.
+ * @param {string} name
+ * @returns {string | null}
+ */
+function checkName(name) {
+  if (!name) {
+    return "A name can't be empty";
+  }
+  if (name.includes('/') || (process.platform === 'win32' && name.includes('\\'))) {
+    return `A name can't hold ${process.platform === 'win32' ? '/ or \\' : '/'}`;
+  }
+  return name === '.' || name === '..' ? `${name} isn't a name` : null;
+}
 
 /** Natural order (`file2` before `file10`), ignoring case and accents. */
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -102,6 +143,14 @@ function canonical(uri) {
  * already, until either command ends it and adds it to the selection (`selected`, by name, in listing
  * order). Another directory clears the selection; operations act on it, or on the entry under the cursor
  * when there is none (`targets`).
+ *
+ * File operations (2.7): entries are copied or cut to vin's clipboard (`this.clipboard`, `src/clipboard.js`)
+ * and pasted — as copies, moved, or as symlinks — into any pane's directory, or copied or moved straight to
+ * a directory (the other pane's, through `main`); a name already there is asked about (`operations.js`).
+ * Deleting moves entries to the trash, a directory set in `pane.trash`, or else deletes them for good —
+ * after asking, unless `pane.confirmDelete` is off. Entries are renamed and created in a prompt. A pane
+ * reloads after its own operations, and emits `changed` with the directories they changed, which `main`
+ * reloads the other pane for; watching for changes made elsewhere is 2.15.
  * @extends {Handler<PaneState>}
  */
 class Pane extends Handler {
@@ -130,6 +179,16 @@ class Pane extends Handler {
       { method: 'unselect', title: 'Unselect', description: 'Drops the group being selected, or else the whole selection' },
       { method: 'selectAll', title: 'Select all' },
       { method: 'invertSelection', title: 'Invert the selection' },
+      { method: 'copy', title: 'Copy', description: 'Puts the entries selected, or the one under the cursor, on the clipboard, to paste copies of' },
+      { method: 'cut', title: 'Cut', description: 'Puts the entries on the clipboard, to move where they are pasted' },
+      { method: 'paste', title: 'Paste', description: 'Copies or moves the entries on the clipboard here' },
+      { method: 'pasteLinks', title: 'Paste as symlinks', description: 'Creates symlinks here to the entries on the clipboard' },
+      { method: 'copyTo', title: 'Copy to a directory', description: 'Copies the entries to a path or URI' },
+      { method: 'moveTo', title: 'Move to a directory', description: 'Moves the entries to a path or URI' },
+      { method: 'delete', title: 'Delete', description: 'Moves the entries to the trash, if pane.trash is set; else, or with true, deletes them for good' },
+      { method: 'rename', title: 'Rename', description: 'Renames the entry under the cursor' },
+      { method: 'create', title: 'Create a file or directory', description: 'A name ending with / is a directory; one with / inside creates the directories on the way' },
+      { method: 'reload', title: 'Reload', description: 'Lists the directory again' },
     ],
     keybindings: [
       { key: 'up', command: 'pane.up' },
@@ -162,6 +221,38 @@ class Pane extends Handler {
       { key: 'escape', command: 'pane.unselect' },
       { key: 'ctrl+a', command: 'pane.selectAll' },
       { key: '*', command: 'pane.invertSelection' },
+      { key: 'y y', command: 'pane.copy' },
+      { key: 'ctrl+c', command: 'pane.copy' },
+      { key: 'cmd+c', command: 'pane.copy' },
+      { key: 'd d', command: 'pane.cut' },
+      { key: 'ctrl+x', command: 'pane.cut' },
+      { key: 'cmd+x', command: 'pane.cut' },
+      { key: 'p', command: 'pane.paste' },
+      { key: 'ctrl+v', command: 'pane.paste' },
+      { key: 'cmd+v', command: 'pane.paste' },
+      { key: 'shift+p', command: 'pane.pasteLinks' },
+      { key: 'shift+d shift+d', command: 'pane.delete' },
+      { key: 'delete', command: 'pane.delete' },
+      { key: 'shift+delete', command: 'pane.delete', args: [true] },
+      { key: 'c w', command: 'pane.rename' },
+      { key: 'c a w', command: 'pane.rename' },
+      { key: 'c i w', command: 'pane.rename' },
+      { key: 'c c', command: 'pane.rename' },
+      { key: 'a', command: 'pane.create' },
+    ],
+    configuration: [
+      {
+        key: 'trash',
+        type: 'string',
+        default: '',
+        description: "A directory deleting moves entries to, e.g. '~/.trash' (created when first needed); empty: deleting is permanent. shift+Delete always deletes for good, as does deleting inside the trash.",
+      },
+      {
+        key: 'confirmDelete',
+        type: 'boolean',
+        default: true,
+        description: 'Ask before deleting for good.',
+      },
     ],
     // papercolor-dark, from vifm-colors; see src/colors.js.
     colors: [
@@ -352,12 +443,21 @@ class Pane extends Handler {
    * @throws {Error} With code `EPATH`, if it isn't a path.
    */
   async navigate(target) {
+    await this.#go(this.#resolve(target), null);
+  }
+
+  /**
+   * @param {unknown} target A URI, or a path relative to the directory shown.
+   * @returns {string} Its URI, canonical.
+   * @throws {TypeError} If `target` isn't a string.
+   * @throws {Error} With code `EPATH`, if it isn't a path.
+   */
+  #resolve(target) {
     if (typeof target !== 'string') {
       throw new TypeError(`Expected a path or URI, got ${JSON.stringify(target)}`);
     }
     // A scheme of two letters at least: `C:` starts a Windows path.
-    const uri = /^[a-z][a-z\d+.-]+:/i.test(target) ? canonical(target) : paths.resolveUri(target, this.state.uri);
-    await this.#go(uri, null);
+    return /^[a-z][a-z\d+.-]+:/i.test(target) ? canonical(target) : paths.resolveUri(target, this.state.uri);
   }
 
   /**
@@ -426,6 +526,357 @@ class Pane extends Handler {
       return entries.filter((entry) => selected.has(entry.name)).map((entry) => entry.name);
     }
     return entries[cursor] ? [entries[cursor].name] : [];
+  }
+
+  /** Puts the targets on the clipboard, to paste copies of, and ends the selection. */
+  copy() {
+    this.#yank('copy');
+  }
+
+  /** Puts the targets on the clipboard, to move where they're pasted, and ends the selection. */
+  cut() {
+    this.#yank('cut');
+  }
+
+  /**
+   * Pastes the clipboard here: copies, or moves what was cut — which then leaves the clipboard.
+   */
+  async paste() {
+    const content = this.clipboard.content;
+    if (!content) {
+      this.notify('Nothing to paste: copy or cut something first', 'warning');
+      return;
+    }
+    await this.#paste(content);
+  }
+
+  /** Creates symlinks here to the entries on the clipboard, cut ones too, which stay on it. */
+  async pasteLinks() {
+    const content = this.clipboard.content;
+    if (!content) {
+      this.notify('Nothing to link to: copy or cut something first', 'warning');
+      return;
+    }
+    await this.#transfer('link', content.uris, this.state.uri);
+  }
+
+  /**
+   * Copies the targets to a directory, and ends the selection.
+   * @param {string} destination A URI, or a path relative to the directory shown.
+   */
+  async copyTo(destination) {
+    await this.#send('copy', this.#resolve(destination));
+  }
+
+  /**
+   * Moves the targets to a directory.
+   * @param {string} destination A URI, or a path relative to the directory shown.
+   */
+  async moveTo(destination) {
+    await this.#send('move', this.#resolve(destination));
+  }
+
+  /**
+   * Deletes the targets: moves them to the trash (`pane.trash`), if there is one and they aren't in it —
+   * keeping both of two with one name there — or else deletes them for good, after asking
+   * (`pane.confirmDelete`).
+   * @param {boolean} [permanent] Delete for good even with a trash. Default: false.
+   */
+  async delete(permanent = false) {
+    const names = this.targets;
+    if (!names.length) {
+      return;
+    }
+    const here = this.#files();
+    const uris = names.map((name) => childUri(here, name));
+    const trash = permanent === true ? null : this.#trash();
+    if (trash && !within(here, trash)) {
+      await this.fs.createDirectory(trash, { recursive: true });
+      const outcome = await transfer(this.fs, { mode: 'move', sources: uris, destination: trash, resolve: async () => ({ action: 'keepBoth', all: true }) });
+      outcome.failures.forEach((error) => this.report(error));
+      await this.#changed([here, trash], null);
+      if (outcome.created.length) {
+        this.notify(`Moved ${describe(names.length === outcome.created.length ? names : outcome.created)} to the trash`);
+      }
+      return;
+    }
+    if (this.config.get('pane.confirmDelete')) {
+      const confirmed = await this.openWindow(new Confirm({
+        title: 'Delete',
+        message: `Delete ${describe(names)} for good?`,
+        yes: 'Delete',
+        no: 'Cancel',
+      }));
+      if (confirmed !== true) {
+        return;
+      }
+    }
+    /** @type {string[]} */
+    const deleted = [];
+    for (const [i, uri] of uris.entries()) {
+      try {
+        await this.fs.delete(uri, { recursive: true });
+        deleted.push(names[i]);
+      } catch (error) {
+        this.report(error);
+      }
+    }
+    await this.#changed([here], null);
+    if (deleted.length) {
+      this.notify(`Deleted ${describe(deleted)}`);
+    }
+  }
+
+  /**
+   * Renames the entry under the cursor, in a prompt that starts with its name, the cursor before its
+   * extension. Several entries at once are 2.8's.
+   */
+  async rename() {
+    const entry = this.state.entries[this.state.cursor];
+    if (!entry) {
+      return;
+    }
+    const here = this.#files();
+    const { name } = entry;
+    const dot = name.lastIndexOf('.');
+    const renamed = await this.openWindow(new Prompt({
+      title: 'Rename',
+      message: name,
+      value: name,
+      cursor: entry.type !== 'directory' && dot > 0 ? dot : name.length,
+      validate: async (text) => {
+        if (text === name) {
+          return null;
+        }
+        const problem = checkName(text);
+        if (problem) {
+          return problem;
+        }
+        // Another case of its own name is a rename, where the file system ignores case.
+        const taken = await statOrNull(this.fs, childUri(here, text));
+        return taken && !same(childUri(here, text), childUri(here, name)) ? `${text} already exists` : null;
+      },
+    }));
+    if (typeof renamed !== 'string' || renamed === name) {
+      return;
+    }
+    await this.fs.rename(childUri(here, name), childUri(here, renamed));
+    await this.#changed([here], renamed);
+  }
+
+  /**
+   * Creates a file, or a directory if the name typed ends with `/` — with the directories on the way, for
+   * a name with `/` inside (`src/lib/`).
+   */
+  async create() {
+    const here = this.#files();
+    const separator = process.platform === 'win32' ? /[\\/]/ : /\//;
+    /** @param {string} text */
+    const parts = (text) => text.split(separator);
+    const typed = await this.openWindow(new Prompt({
+      title: 'Create',
+      message: 'A file, or a directory: end it with /',
+      validate: async (text) => {
+        const names = parts(text);
+        if (names.at(-1) === '') {
+          names.pop();
+        }
+        const problem = names.length ? names.map(checkName).find(Boolean) : "A name can't be empty";
+        if (problem) {
+          return problem;
+        }
+        const uri = names.reduce(childUri, here);
+        return await statOrNull(this.fs, uri) ? `${names.join('/')} already exists` : null;
+      },
+    }));
+    if (typeof typed !== 'string') {
+      return;
+    }
+    const names = parts(typed);
+    const directory = names.at(-1) === '';
+    if (directory) {
+      names.pop();
+    }
+    const parent = names.slice(0, -1).reduce(childUri, here);
+    if (names.length > 1) {
+      await this.fs.createDirectory(parent, { recursive: true });
+    }
+    const uri = childUri(parent, /** @type {string} */ (names.at(-1)));
+    if (directory) {
+      await this.fs.createDirectory(uri);
+    } else {
+      await this.fs.writeFile(uri, '');
+    }
+    await this.#changed([here], names[0]);
+  }
+
+  /** Lists the directory again, keeping the cursor on its entry, and what's still there selected. */
+  async reload() {
+    await this.#list(this.state.uri, null);
+  }
+
+  /**
+   * Takes a paste of paths — vin's own from the clipboard, as a terminal whose `ctrl+v` pastes text sends
+   * them (Windows Terminal), or any others — as a paste of those entries. A single character is a key.
+   * @param {string} text
+   * @returns {boolean}
+   */
+  onText(text) {
+    if ([...text].length < 2) {
+      return false;
+    }
+    const content = this.clipboard.recognize(text);
+    if (!content) {
+      this.notify("Only paths can be pasted here, one per line", 'warning');
+      return true;
+    }
+    this.#paste(content).catch((error) => this.report(error));
+    return true;
+  }
+
+  /**
+   * @param {'copy' | 'cut'} mode
+   */
+  #yank(mode) {
+    const names = this.targets;
+    if (!names.length) {
+      return;
+    }
+    const here = this.#files();
+    this.clipboard.set(mode, names.map((name) => childUri(here, name)));
+    this.#select([]);
+    this.notify(`${mode === 'copy' ? 'Copied' : 'Cut'} ${describe(names)} — paste to ${mode === 'copy' ? 'copy' : 'move'} ${names.length === 1 ? 'it' : 'them'}`);
+  }
+
+  /**
+   * Pastes clipboard content here.
+   * @param {import('../../../clipboard').ClipboardContent} content
+   */
+  async #paste({ mode, uris }) {
+    const outcome = await this.#transfer(mode === 'cut' ? 'move' : 'copy', uris, this.state.uri);
+    if (mode === 'cut' && !outcome.cancelled) {
+      this.clipboard.clear();
+    }
+  }
+
+  /**
+   * Copies or moves the targets to a directory, and ends the selection.
+   * @param {'copy' | 'move'} mode
+   * @param {string} destination A URI.
+   */
+  async #send(mode, destination) {
+    const names = this.targets;
+    if (!names.length) {
+      return;
+    }
+    const here = this.#files();
+    this.#select([]);
+    await this.#transfer(mode, names.map((name) => childUri(here, name)), destination);
+  }
+
+  /**
+   * Copies, moves or links entries into a directory, asking about names already there; reports what
+   * failed and says what was done.
+   * @param {Mode} mode
+   * @param {string[]} uris
+   * @param {string} destination
+   * @returns {Promise<import('./operations').Outcome>}
+   */
+  async #transfer(mode, uris, destination) {
+    this.#files(destination);
+    const outcome = await transfer(this.fs, { mode, sources: uris, destination, resolve: (conflict) => this.#ask(mode, conflict) });
+    outcome.failures.forEach((error) => this.report(error));
+    const sources = mode === 'move' ? uris.map((uri) => parentUri(uri)?.uri).filter((uri) => uri !== undefined) : [];
+    const here = same(destination, this.state.uri);
+    await this.#changed([destination, ...sources], here ? outcome.created[0] ?? null : null);
+    const parts = [];
+    if (outcome.created.length) {
+      parts.push(`${VERBS[mode].done} ${describe(outcome.created)}${here ? '' : ` to ${paths.displayUri(destination)}`}`);
+    }
+    if (outcome.skipped) {
+      parts.push(`skipped ${outcome.skipped}`);
+    }
+    if (outcome.cancelled) {
+      parts.push('cancelled the rest');
+    }
+    if (parts.length) {
+      const text = parts.join(', ');
+      this.notify(text[0].toUpperCase() + text.slice(1));
+    }
+    return outcome;
+  }
+
+  /**
+   * Asks what to do about a name taken at the destination.
+   * @param {Mode} mode
+   * @param {Conflict} conflict
+   * @returns {Promise<Resolution>}
+   */
+  async #ask(mode, { name, directory, merge }) {
+    const replace = merge ? 'Merge' : 'Overwrite';
+    const key = merge ? 'm' : 'o';
+    const choices = [
+      { label: replace, key, value: 'overwrite', description: merge ? 'Put its entries in, asking about each one there' : undefined },
+      { label: `${replace} all`, key: key.toUpperCase(), value: 'overwrite all', description: 'Overwrite files and merge directories from now on' },
+      { label: 'Skip', key: 's', value: 'skip' },
+      { label: 'Skip all', key: 'S', value: 'skip all' },
+      { label: 'Keep both', key: 'b', value: 'keepBoth', description: 'Give the new one a free name: name (2)' },
+      { label: 'Keep both for all', key: 'B', value: 'keepBoth all' },
+      { label: 'Cancel', key: 'c', value: 'cancel', description: 'Stop here' },
+    ];
+    const answer = await this.openWindow(new ChoiceList({
+      title: VERBS[mode].doing,
+      message: `${name} is already in ${paths.displayUri(directory)}`,
+      choices,
+      // Enter on the safe answer.
+      selected: 2,
+    }));
+    if (typeof answer !== 'string') {
+      return { action: 'cancel' };
+    }
+    const [action, all] = answer.split(' ');
+    return { action: /** @type {import('./operations').Action} */ (action), all: all === 'all' };
+  }
+
+  /**
+   * After an operation: reloads the pane if it changed its directory, and tells `main` which it changed.
+   * @param {string[]} uris Directories changed.
+   * @param {string | null} focus The entry to put the cursor on, if it's in the pane's directory.
+   */
+  async #changed(uris, focus) {
+    this.emit('changed', { uris: [...new Set(uris)] });
+    if (uris.some((uri) => same(uri, this.state.uri))) {
+      await this.#list(this.state.uri, focus);
+    }
+  }
+
+  /**
+   * The trash directory, if `pane.trash` sets one.
+   * @returns {string | null} Its URI.
+   * @throws {Error} A failure, if it isn't an absolute path.
+   */
+  #trash() {
+    const trash = /** @type {string} */ (this.config.get('pane.trash'));
+    if (!trash) {
+      return null;
+    }
+    try {
+      return paths.toUri(paths.resolve(trash));
+    } catch (error) {
+      throw failure(`pane.trash in the config must be an absolute path: ${/** @type {Error} */ (error).message}`);
+    }
+  }
+
+  /**
+   * @param {string} [uri] A directory. Default: the one shown.
+   * @returns {string} It, if it can hold files.
+   * @throws {Error} A failure for the list of drives (2.4), which holds none.
+   */
+  #files(uri = this.state.uri) {
+    if (uri === paths.drives) {
+      throw failure('The list of drives holds no files; go into a drive first');
+    }
+    return uri;
   }
 
   /**
@@ -542,7 +993,9 @@ class Pane extends Handler {
       .sort(compareEntries);
     this.#remember();
     const name = focus ?? this.#positions.get(uri) ?? null;
-    const cursor = name === null ? 0 : Math.max(0, entries.findIndex((entry) => entry.name === name));
+    const found = name === null ? -1 : entries.findIndex((entry) => entry.name === name);
+    // An entry gone from the same directory — deleted, moved — leaves the cursor on its row.
+    const cursor = Math.max(0, found >= 0 ? found : uri === this.state.uri ? Math.min(this.state.cursor, entries.length - 1) : 0);
     // The same directory again keeps what's still there selected.
     const kept = new Set(uri === this.state.uri ? this.state.selected : []);
     const selected = entries.filter((entry) => kept.has(entry.name)).map((entry) => entry.name);

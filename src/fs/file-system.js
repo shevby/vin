@@ -61,6 +61,7 @@ const { paths } = require('../paths');
  * - `delete` of a non-empty directory needs `recursive` (`ENOTEMPTY`); a symlink is deleted, never its target.
  * - `rename` and `copy` take a whole tree; changing only the case of a name is a rename, never an overwrite.
  * - `copy` is optional: a protocol without a server-side copy leaves it out, and the caller streams instead.
+ * - `createSymlink` is optional too, for protocols without links.
  * - Streams are Node streams, opened before they're returned, so a missing file or an existing target
  *   rejects the promise instead of erroring the stream later.
  * @typedef {object} FileSystemProvider
@@ -74,6 +75,9 @@ const { paths } = require('../paths');
  * @property {(uri: string, options?: { recursive?: boolean }) => Promise<void>} delete
  * @property {(from: string, to: string, options?: OverwriteOptions) => Promise<void>} rename
  * @property {(from: string, to: string, options?: OverwriteOptions) => Promise<void>} [copy]
+ * @property {(uri: string, target: string) => Promise<void>} [createSymlink] Creates a symlink at `uri` to
+ *   `target`, a URI of the same provider; the link holds the target's absolute path. Fails with `EEXIST` if
+ *   anything is at `uri`.
  * @property {(uri: string, options?: { start?: number, end?: number }) => Promise<import('node:stream').Readable>}
  *   createReadStream `start` and `end` are byte offsets, both inclusive, as in `fs.createReadStream`.
  * @property {(uri: string, options?: OverwriteOptions) => Promise<import('node:stream').Writable>} createWriteStream
@@ -258,6 +262,17 @@ class FileSystem {
       throw fsError('ENOSYS', "This file system can't copy yet", { path: from, dest: to });
     }
     return provider.copy(from, to, options);
+  }
+
+  /**
+   * @type {NonNullable<FileSystemProvider['createSymlink']>}
+   */
+  async createSymlink(uri, target) {
+    const provider = this.#same(target, uri, 'link');
+    if (!provider.createSymlink) {
+      throw fsError('ENOSYS', "This file system has no symlinks", { path: target, dest: uri });
+    }
+    return provider.createSymlink(uri, target);
   }
 
   /** @type {FileSystemProvider['createReadStream']} */
