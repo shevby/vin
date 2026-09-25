@@ -12,8 +12,8 @@ import { createInProcessTransport } from '../../../../src/transport.js';
 import { App } from '../../app.jsx';
 import { connect, disconnect } from '../../handler.js';
 import { settle } from '../../../../test/ui.jsx';
-import { columnsFor, marker, scrollTop } from './listing.jsx';
-import { selectionCount } from './pane.jsx';
+import { columnsFor, location, locationWidth, marker, scrollTop } from './listing.jsx';
+import { queryWidth, searchNote, selectionCount } from './pane.jsx';
 
 /**
  * A temp directory, removed after the test.
@@ -194,4 +194,40 @@ test('a page down takes the cursor to the bottom row shown, then pages so that r
   assert.equal(next[0], `f${rows - 1}`);
   assert.equal(next.at(-1), `f${2 * rows - 2}`);
   assert.equal(main.left.state.cursor, 2 * rows - 2);
+});
+
+test('a search shows in the bottom border as it is typed; a tree search lists where each match is', async (t) => {
+  const dir = tempDir(t, { a: null, 'deep.md': '' });
+  fs.mkdirSync(nodePath.join(dir, 'a', 'b'));
+  fs.writeFileSync(nodePath.join(dir, 'a', 'b', 'deep.txt'), '');
+  const { main, lines } = await setup(t, dir);
+  /** @returns {Promise<string>} The screen's bottom border, without colors. */
+  const bottom = async () => ((await lines()).find((line) => line.includes('╰')) ?? '').replace(/\[[\d;]*m/g, '');
+  await main.left.searchTree();
+  for (const start = Date.now(); main.left.state.search?.running !== false; await settle()) {
+    assert.ok(Date.now() - start < 1000, 'the walk');
+  }
+  main.left.searchBar.input.onText('deep');
+  assert.match(await bottom(), /^╰─ \?deep +· 2 found ─+╯/);
+  const screen = await lines();
+  const rows = screen.slice(1, 3).map((line) => line.replace(/\[[\d;]*m/g, '').slice(0, 50).trimEnd());
+  assert.match(rows[0], /^│deep\.txt +a\/b\/ /);
+  assert.match(rows[1], /^│deep\.md +\.\/ /);
+  await main.left.searchBar.accept();
+  assert.match(await bottom(), /^╰─ \?deep · 2 found ─+╯/);
+  await main.left.search();
+  main.left.searchBar.input.onText('/(');
+  assert.match(await bottom(), /^╰─ \/\/\( +\/\(\/: Unterminated gro/);
+});
+
+test('searchNote says how many were found, and how far a tree walk has got', () => {
+  const search = { query: 'x', recursive: true, typing: false, running: false, scanned: 10, error: null, capped: false };
+  assert.equal(searchNote(search, 3), '3 found');
+  assert.equal(searchNote({ ...search, capped: true }, 3), '3+ found');
+  assert.equal(searchNote({ ...search, running: true }, 3), '3 found · searching, 10 entries so far…');
+  assert.equal(queryWidth(100), 40);
+  assert.equal(queryWidth(10), 8);
+  assert.equal(location('a/b/x.txt'), 'a/b/');
+  assert.equal(location('x.txt'), './');
+  assert.equal(locationWidth(100), 35);
 });

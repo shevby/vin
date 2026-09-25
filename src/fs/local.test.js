@@ -300,3 +300,19 @@ test('watch reports created, changed and deleted entries until stopped', async (
   assert.equal(changes.length, count, 'nothing after stopping');
   assert.throws(() => local.watch(uri('missing'), () => {}), { code: 'ENOENT' });
 });
+
+test('on Windows, hiddenEntries finds every entry with the Hidden attribute in a tree at once', { skip: process.platform !== 'win32' }, async (t) => {
+  const { dir, uri } = tempDir(t);
+  const odd = 'a & b ^ c ! (d) é';
+  fs.mkdirSync(path.join(dir, odd, 'in'), { recursive: true });
+  for (const name of ['top', `${odd}/in/hïdden ☃`, `${odd}/plain`]) {
+    fs.writeFileSync(path.join(dir, ...name.split('/')), '');
+  }
+  const attrib = (/** @type {string} */ name) => require('node:child_process').execFileSync('attrib', ['+h', path.join(dir, ...name.split('/'))]);
+  attrib(`${odd}/in/hïdden ☃`);
+  attrib(`${odd}/in`);
+  assert.deepEqual((await local.hiddenEntries(uri(''))).sort(), [`${odd}/in`, `${odd}/in/hïdden ☃`]);
+  assert.deepEqual(await local.hiddenEntries(uri(`${odd}/in/hïdden ☃`)), [], 'a file has none under it');
+  const entries = await local.readDirectory(uri(`${odd}/in`), { attributes: false });
+  assert.deepEqual(entries.map((entry) => entry.hidden === true), [false], 'attributes: false skips them');
+});

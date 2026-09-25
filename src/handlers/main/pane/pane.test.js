@@ -756,3 +756,157 @@ test('c w on a selection renames it with one name: $n, $i, $e, previewed; names 
   assert.deepEqual(fs.readdirSync(dir).sort(), ['e0.mkv', 'e1.mkv', 'e2.mkv', 'x1.mkv']);
   assert.deepEqual(['e0.mkv', 'e1.mkv', 'e2.mkv'].map((name) => fs.readFileSync(path.join(dir, name), 'utf8')), ['a', 'b', 'c']);
 });
+
+/**
+ * Makes a tree in `dir`: a path ending with `/` is a directory, anything else an empty file.
+ * @param {string} dir
+ * @param {string[]} names
+ */
+function makeTree(dir, names) {
+  for (const name of names) {
+    const target = path.join(dir, ...name.split('/'));
+    if (name.endsWith('/')) {
+      fs.mkdirSync(target, { recursive: true });
+    } else {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, name);
+    }
+  }
+}
+
+/** @param {Pane} pane */
+const names = (pane) => pane.state.entries.map((entry) => entry.name);
+
+test('f lists only the entries matching as the query is typed; enter keeps them, n and N go round them', async (t) => {
+  const dir = tempDir(t, { 'report.pdf': '', 'notes.md': '', 'PREP.txt': '', 'x.md': '', sub: null });
+  const { pane, press, type, focus, current, messages } = await openWindow(dir);
+  await press('j');
+  await press('f');
+  assert.equal(focus(), 'textField');
+  assert.deepEqual(pane.state.search, { query: '', recursive: false, typing: true, running: false, scanned: 0, error: null, capped: false });
+  assert.equal(pane.state.entries.length, 5, 'nothing typed: everything');
+  assert.equal(current(), 'notes.md', 'the cursor stays');
+  await type('rep');
+  assert.deepEqual(names(pane), ['PREP.txt', 'report.pdf']);
+  assert.equal(current(), 'PREP.txt');
+  await press('down');
+  assert.equal(current(), 'report.pdf', 'the arrows move while typing');
+  await type('o');
+  assert.deepEqual(names(pane), ['report.pdf']);
+  await press('backspace backspace backspace backspace');
+  await type('*.md');
+  assert.deepEqual(names(pane), ['notes.md', 'x.md']);
+  await press('enter');
+  assert.equal(focus(), 'pane');
+  assert.equal(pane.state.search?.typing, false);
+  await press('n');
+  assert.equal(current(), 'x.md');
+  await press('n');
+  assert.equal(current(), 'notes.md', 'round to the first');
+  await press('shift+n');
+  assert.equal(current(), 'x.md', 'round to the last');
+  await press('/');
+  assert.equal(pane.state.entries.length, 5, 'a new search looks in the whole directory');
+  await type('/^no');
+  assert.deepEqual(names(pane), ['notes.md']);
+  await type('(');
+  assert.match(String(pane.state.search?.error), /Unterminated group/);
+  assert.deepEqual(names(pane), ['notes.md'], 'a bad regex keeps what was listed');
+  await press('enter');
+  assert.equal(focus(), 'textField', 'enter waits for a regex that is one');
+  await type(')');
+  assert.equal(pane.state.search?.error, null);
+  await press('escape');
+  assert.equal(focus(), 'pane');
+  assert.deepEqual(pane.state.search?.query, '*.md', 'escape: back to the list before');
+  assert.equal(current(), 'x.md');
+  await press('escape');
+  await until(() => pane.state.search === null, 'the directory');
+  assert.equal(pane.state.entries.length, 5);
+  assert.equal(current(), 'notes.md', 'where the cursor was before the search');
+  await press('f');
+  await type('zzz');
+  assert.deepEqual(names(pane), []);
+  await press('enter');
+  assert.deepEqual(messages(), ['Nothing matches zzz']);
+  assert.equal(pane.state.search, null);
+  assert.equal(current(), 'notes.md');
+  await press('n');
+  assert.match(messages().at(-1) ?? '', /search with f or \/ first/);
+});
+
+test('opening a match goes to it in its directory; back returns to the matches, the cursor on it', async (t) => {
+  const dir = tempDir(t);
+  makeTree(dir, ['a/b/deep.txt', 'a/one.txt', 'top.txt', '.hidden/deep.md', 'c/']);
+  const { pane, press, type, current, focus } = await openWindow(dir);
+  await press('?');
+  assert.equal(focus(), 'textField');
+  await until(() => pane.state.search?.running === false, 'the walk');
+  assert.deepEqual(names(pane).sort(), ['.hidden', '.hidden/deep.md', 'a', 'a/b', 'a/b/deep.txt', 'a/one.txt', 'c', 'top.txt']);
+  await type('deep');
+  assert.deepEqual(names(pane), ['.hidden/deep.md', 'a/b/deep.txt']);
+  assert.ok(pane.state.entries[0].hidden, 'inside a hidden directory');
+  await press('down enter');
+  await until(() => pane.state.entries.every((entry) => entry.size !== null), 'the details');
+  assert.equal(pane.state.entries[1].size, 'a/b/deep.txt'.length);
+  await press('l');
+  await until(() => pane.state.search === null, 'the directory');
+  assert.equal(pane.state.uri, paths.toUri(path.join(dir, 'a', 'b')));
+  assert.equal(current(), 'deep.txt');
+  await press('alt+left');
+  await until(() => pane.state.search !== null && current() === 'a/b/deep.txt', 'the matches');
+  assert.deepEqual(pane.state.search && { ...pane.state.search, scanned: 0 }, { query: 'deep', recursive: true, typing: false, running: false, scanned: 0, error: null, capped: false });
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  await press('alt+left');
+  await until(() => pane.state.search === null, 'the directory');
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  await press('alt+right');
+  await until(() => pane.state.search !== null, 'the matches');
+  await press('alt+right');
+  await until(() => pane.state.uri !== paths.toUri(dir), 'the directory of the match');
+  await press('alt+left');
+  await until(() => pane.state.search !== null, 'the matches');
+  await press('h');
+  await until(() => pane.state.search === null, 'the directory searched');
+  assert.equal(pane.state.uri, paths.toUri(dir));
+  await press('z m ?');
+  await type('deep');
+  await until(() => pane.state.search?.running === false, 'the walk');
+  assert.deepEqual(names(pane), ['a/b/deep.txt'], 'hidden ones are left out while hidden entries are');
+  await press('enter z o');
+  await until(() => pane.state.search?.running === false && names(pane).length === 2, 'the walk, hidden ones in');
+});
+
+test('operations act on the matches where they are; paste and create need a directory', async (t) => {
+  const dir = tempDir(t);
+  makeTree(dir, ['a/one.txt', 'a/b/two.txt', 'three.txt', 'keep.md']);
+  const { vin, pane, press, type, focus, messages } = await openWindow(dir, "{ pane: { confirmDelete: false } }");
+  await press('shift+f');
+  await type('.txt');
+  await until(() => pane.state.search?.running === false, 'the walk');
+  await press('enter');
+  assert.deepEqual(names(pane), ['a/b/two.txt', 'a/one.txt', 'three.txt']);
+  await press('g g j c w');
+  await until(() => focus() === 'textField', 'the prompt');
+  const input = /** @type {any} */ (vin.windows.focused);
+  assert.deepEqual([input.state.value, input.state.cursor], ['one.txt', 3], 'its own name');
+  await press('ctrl+u');
+  await type('uno');
+  await press('enter');
+  await until(() => fs.existsSync(path.join(dir, 'a', 'uno.txt')), 'the rename');
+  await until(() => pane.state.search?.running === false && names(pane).includes('a/uno.txt'), 'the search again');
+  assert.equal(pane.state.entries[pane.state.cursor].name, 'a/uno.txt');
+  await press('g g');
+  await press('delete');
+  await until(() => !fs.existsSync(path.join(dir, 'a', 'b', 'two.txt')), 'the delete');
+  await until(() => pane.state.search?.running === false && names(pane).length === 2, 'the search again');
+  assert.deepEqual(names(pane), ['a/uno.txt', 'three.txt']);
+  await press('y y');
+  assert.deepEqual(vin.clipboard.content?.uris, [paths.toUri(path.join(dir, 'a', 'uno.txt'))]);
+  await press('p');
+  await until(() => messages().length, 'the refusal');
+  assert.match(messages()[0], /isn't a directory/);
+  await press('a');
+  await until(() => messages().length, 'the refusal');
+  assert.match(messages()[0], /isn't a directory/);
+});

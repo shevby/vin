@@ -10,6 +10,8 @@ const { transfer, same, statOrNull } = require('./operations');
 const { TRASH_URI } = require('../../../trash');
 const { checkPattern, expand, extension } = require('./pattern');
 const { SORT_KEYS, comparator, isHidden, describeSort } = require('./sorting');
+const { matcher, splitPath, walk } = require('./search');
+const SearchBar = require('./search-bar/search-bar');
 
 /**
  * @typedef {import('../../../fs/file-system').FileType} FileType
@@ -41,6 +43,50 @@ const { SORT_KEYS, comparator, isHidden, describeSort } = require('./sorting');
  */
 
 /**
+ * What a search looks for (2.12): a query — wildcards, or `/a regex/` (`search.js`) — in the directory
+ * shown, or in it and every directory below.
+ * @typedef {object} Query
+ * @property {string} query
+ * @property {boolean} recursive
+ */
+
+/**
+ * A search the pane shows: instead of the directory, only the entries matching — for a tree, named by their
+ * path from the directory (`src/lib/x.js`).
+ * @typedef {object} SearchState
+ * @property {string} query
+ * @property {boolean} recursive
+ * @property {boolean} typing While the query is typed, in the search bar (`searchBar`).
+ * @property {boolean} running While the tree is walked.
+ * @property {number} scanned Entries of the tree walked so far.
+ * @property {string | null} error Why the query isn't one — a bad regular expression — while it isn't.
+ * @property {boolean} capped Whether matches are left out: past `MAX_MATCHES`, or past `MAX_WALK` entries.
+ */
+
+/**
+ * A step of a pane's history: a directory, or a search in it, with the entry the cursor was on when the
+ * pane left a search (a directory's is in `#positions`).
+ * @typedef {object} Place
+ * @property {string} uri
+ * @property {Query | null} search
+ * @property {string | null} cursor
+ */
+
+/**
+ * The tree a search walks, kept while the pane shows the same directory, for the next search in it.
+ * @typedef {object} Tree
+ * @property {number} id Which walk fills it (`#walkId`).
+ * @property {string} root
+ * @property {boolean} showHidden Whether hidden entries were walked.
+ * @property {Entry[]} entries Named by their path from the root.
+ * @property {Map<string, Entry>} index By name.
+ * @property {WeakSet<Entry>} statted Those whose details were asked for.
+ * @property {boolean} done
+ * @property {boolean} stopped Whether the walk stopped before it was done.
+ * @property {boolean} capped Whether it stopped at `MAX_WALK` entries.
+ */
+
+/**
  * @typedef {object} PaneState
  * @property {string} uri The directory shown.
  * @property {Status} status
@@ -52,6 +98,7 @@ const { SORT_KEYS, comparator, isHidden, describeSort } = require('./sorting');
  * @property {boolean} showHidden Whether hidden entries are listed (2.11).
  * @property {number} hiddenCount How many hidden entries aren't, while they aren't.
  * @property {Sort} sort The listing's order.
+ * @property {SearchState | null} search While the pane shows a search instead of the directory.
  */
 
 /**
@@ -70,6 +117,39 @@ const HISTORY_SIZE = 100;
 
 /** Directories a pane remembers its cursor in, so coming back puts it where it was. */
 const POSITIONS_SIZE = 1000;
+
+/** Matches a search lists at most — more would make each update of the list slow to send. */
+const MAX_MATCHES = 10_000;
+
+/** Entries a tree search keeps at most, walking; it stops there. */
+const MAX_WALK = 500_000;
+
+/** How often, in ms, a tree search shows what it has found, while it walks. */
+const WALK_UPDATE = 250;
+
+/**
+ * @param {Query | null} a
+ * @param {Query | null} b
+ * @returns {boolean} Whether both are the same search, or both none.
+ */
+function sameQuery(a, b) {
+  return a === null || b === null ? a === b : a.query === b.query && a.recursive === b.recursive;
+}
+
+/**
+ * Whether an entry found in a tree is hidden by the file system's mark on it or on a directory it's in.
+ * @param {string} path From the root, `/`-separated.
+ * @param {Set<string>} hidden Paths so marked.
+ * @returns {boolean}
+ */
+function markedHidden(path, hidden) {
+  for (let slash = path.indexOf('/'); slash >= 0; slash = path.indexOf('/', slash + 1)) {
+    if (hidden.has(path.slice(0, slash))) {
+      return true;
+    }
+  }
+  return hidden.has(path);
+}
 
 /** How each operation is named, in a conflict's title and in the message after it. */
 const VERBS = /** @type {const} */ ({
@@ -163,6 +243,13 @@ function canonical(uri) {
  * first or not — from the config, changed per pane with `sort` and the sort menu (`chooseSort`). Sizes and
  * times come after the listing, so sorting by them orders it again once they're all in, keeping the cursor
  * on its entry.
+ *
+ * A search (2.12) lists only the entries matching a query (`search.js`) — of the directory (`search`), or of
+ * it and every directory below (`searchTree`), walked in the background — as it's typed in the search bar
+ * (`searchBar`); `enter` keeps the list, a step of the history, and `escape` goes back. Opening an entry
+ * there goes to its directory, the cursor on it, and going back returns to the list, searched again.
+ * Operations act on the entries listed, wherever they are, but paste and create need a directory, not a
+ * list.
  * @extends {Handler<PaneState>}
  */
 class Pane extends Handler {
@@ -210,6 +297,10 @@ class Pane extends Handler {
       { method: 'reverseSort', title: 'Reverse the order' },
       { method: 'toggleDirectoriesFirst', title: 'Directories first, or not' },
       { method: 'chooseSort', title: 'Choose the order', description: 'A menu: n name, e extension, s size, m modified — capitals the other way round' },
+      { method: 'search', title: 'Search here', description: 'Lists only the entries matching what is typed: wildcards (* any characters, ? one), or /a regex/' },
+      { method: 'searchTree', title: 'Search here and below', description: 'The same, in this directory and every one under it' },
+      { method: 'nextMatch', title: 'Next match', description: "In a search's list, the next entry, from the last one round to the first" },
+      { method: 'previousMatch', title: 'Previous match', description: "In a search's list, the previous entry, from the first one round to the last" },
     ],
     keybindings: [
       { key: 'up', command: 'pane.up' },
@@ -265,6 +356,12 @@ class Pane extends Handler {
       { key: 'z o', command: 'pane.showHiddenEntries' },
       { key: 'z m', command: 'pane.hideHiddenEntries' },
       { key: 'o', command: 'pane.chooseSort' },
+      { key: 'f', command: 'pane.search' },
+      { key: '/', command: 'pane.search' },
+      { key: 'shift+f', command: 'pane.searchTree' },
+      { key: '?', command: 'pane.searchTree' },
+      { key: 'n', command: 'pane.nextMatch' },
+      { key: 'shift+n', command: 'pane.previousMatch' },
     ],
     configuration: [
       {
@@ -327,6 +424,8 @@ class Pane extends Handler {
       { key: 'selected', default: { fg: 173, bg: 235, bold: true }, description: 'Selected entries (vifm: Selected).' },
       { key: 'hidden', default: { dim: true }, description: "Hidden entries, over their type's color: faded, where the terminal can." },
       { key: 'sort', default: { fg: 244 }, description: "The order, in the bottom border, when it isn't by name (vifm: LineNr)." },
+      { key: 'search', default: { fg: 71, bg: 235, bold: true }, description: 'The search and how many it found, in the bottom border (vifm: WildMenu).' },
+      { key: 'location', default: { fg: 244 }, description: "Where an entry a tree search found is, in its second column (vifm: LineNr)." },
     ],
   };
 
@@ -340,7 +439,7 @@ class Pane extends Handler {
   #details = Promise.resolve();
   /** @type {Entry[]} Every entry of the directory shown, hidden ones too, with their details as they come. */
   #all = [];
-  /** @type {string[]} Directories shown, oldest first, as URIs. */
+  /** @type {Place[]} Directories and searches shown, oldest first. */
   #history = [];
   /** Where in `#history` the pane is. */
   #index = 0;
@@ -348,6 +447,18 @@ class Pane extends Handler {
   #positions = new Map();
   /** Rows the UI shows at once, which the page commands move by; the UI reports it (`setPageSize()`). */
   #pageSize = 20;
+  /** Whether a search is typed — the search bar has the focus. */
+  #typing = false;
+  /** @type {{ search: Query | null, cursor: string | null } | null} What the pane showed before the search typed. */
+  #before = null;
+  /** @type {Tree | null} */
+  #tree = null;
+  /** Counts tree walks started, so one replaced stops. */
+  #walkId = 0;
+  /** @type {string | null} The entry to put the cursor on once a search finds it, unless the cursor moves first. */
+  #want = null;
+  /** Whether details of a tree search's matches are being fetched. */
+  #filling = false;
 
   /**
    * @param {string} name `left` or `right`, in the main window.
@@ -361,6 +472,17 @@ class Pane extends Handler {
       throw new TypeError(`Pane "${name}" needs a directory URI, got ${JSON.stringify(uri)}`);
     }
     this.#uri = canonical(uri);
+    /** Where searches are typed (2.12). @readonly */
+    this.searchBar = this.add(new SearchBar('searchBar', {
+      onChange: (query) => {
+        if (this.#typing && this.state.search) {
+          this.state.search.query = query;
+          this.#applyQuery();
+        }
+      },
+      onAccept: () => this.#accept(),
+      onCancel: () => this.#cancel(),
+    }));
   }
 
   onInit() {
@@ -379,8 +501,9 @@ class Pane extends Handler {
         reverse: /** @type {boolean} */ (config.get('pane.sortReverse')),
         directoriesFirst: /** @type {boolean} */ (config.get('pane.directoriesFirst')),
       },
+      search: null,
     });
-    this.#history = [this.#uri];
+    this.#history = [{ uri: this.#uri, search: null, cursor: null }];
     this.#index = 0;
     // Not awaited: vin starts while the directory is read.
     this.#list(this.#uri, null);
@@ -454,6 +577,10 @@ class Pane extends Handler {
    * comes.
    */
   async open() {
+    if (this.state.search) {
+      await this.#jump();
+      return;
+    }
     const entry = this.state.entries[this.state.cursor];
     if (entry?.type === 'directory') {
       await this.enter();
@@ -477,8 +604,15 @@ class Pane extends Handler {
     opener.openWithDefaultApp(path).catch((error) => this.report(error));
   }
 
-  /** Enters the directory under the cursor; on anything else, does nothing. */
+  /**
+   * Enters the directory under the cursor; on anything else, does nothing. In a search's list, goes to the
+   * entry's directory instead, as `open` does.
+   */
   async enter() {
+    if (this.state.search) {
+      await this.#jump();
+      return;
+    }
     const entry = this.state.entries[this.state.cursor];
     if (entry?.type === 'directory') {
       await this.#go(this.#mounted(this.state.uri, entry.name) ? TRASH_URI : canonical(childUri(this.state.uri, entry.name)), null);
@@ -487,9 +621,14 @@ class Pane extends Handler {
 
   /**
    * Goes up to the parent directory, with the cursor on the one it came from — from a drive's root on
-   * Windows, to the list of drives (2.4). A root has none.
+   * Windows, to the list of drives (2.4). A root has none. From a search's list, goes to the directory
+   * searched.
    */
   async toParent() {
+    if (this.state.search) {
+      await this.#go(this.state.uri, null);
+      return;
+    }
     const up = this.state.uri === TRASH_URI ? { uri: rootUri(), name: 'trash' } : parentUri(this.state.uri);
     if (up) {
       await this.#go(up.uri, up.name);
@@ -574,13 +713,419 @@ class Pane extends Handler {
     }
   }
 
-  /** Drops the group being selected; else, unselects everything. */
-  unselect() {
+  /**
+   * Drops the group being selected; else, unselects everything; else, in a search's list, goes to the
+   * directory searched.
+   */
+  async unselect() {
     if (this.state.range !== null) {
       this.state.range = null;
     } else if (this.state.selected.length) {
       this.state.selected = [];
+    } else if (this.state.search) {
+      await this.toParent();
     }
+  }
+
+  /**
+   * Starts a search of the directory shown: as it's typed in the search bar, only the entries matching are
+   * listed (`search.js`: wildcards, or `/a regex/`).
+   */
+  async search() {
+    this.#startSearch(false);
+  }
+
+  /** Starts a search of the directory shown and every one below it, walked in the background. */
+  async searchTree() {
+    this.#startSearch(true);
+  }
+
+  /** In a search's list, moves to the next entry — from the last, round to the first. */
+  nextMatch() {
+    this.#cycle(1);
+  }
+
+  /** In a search's list, moves to the previous entry — from the first, round to the last. */
+  previousMatch() {
+    this.#cycle(-1);
+  }
+
+  /** @param {1 | -1} step */
+  #cycle(step) {
+    const { search, entries, cursor } = this.state;
+    if (!search) {
+      this.notify('n and N go through the matches of a search: search with f or / first', 'warning');
+      return;
+    }
+    if (entries.length) {
+      this.#move((cursor + step + entries.length) % entries.length);
+    }
+  }
+
+  /**
+   * Opens the search bar, listing what matches as it's typed. A search typed already switches to this one's
+   * reach; from a search's list, a new search looks in the directory searched.
+   * @param {boolean} recursive
+   */
+  #startSearch(recursive) {
+    if (this.state.status !== 'ready') {
+      return;
+    }
+    const { search } = this.state;
+    if (this.#typing && search) {
+      if (search.recursive !== recursive) {
+        search.recursive = recursive;
+        if (recursive) {
+          this.#startWalk();
+        }
+        this.#applyQuery();
+      }
+      return;
+    }
+    this.#remember();
+    this.#before = {
+      search: search && { query: search.query, recursive: search.recursive },
+      cursor: this.state.entries[this.state.cursor]?.name ?? null,
+    };
+    this.#want = null;
+    this.#typing = true;
+    this.state.search = { query: '', recursive, typing: true, running: false, scanned: 0, error: null, capped: false };
+    this.searchBar.input.setText('');
+    if (recursive) {
+      this.#startWalk();
+    }
+    this.#applyQuery();
+    this.searchBar.input.focus();
+  }
+
+  /**
+   * Keeps the matches — as a step of the history — and gives the focus back to the listing. An empty
+   * query, or one matching nothing in the directory, goes back instead; a bad regular expression stays to
+   * be fixed.
+   */
+  async #accept() {
+    const search = this.state.search;
+    if (!this.#typing || !search) {
+      return;
+    }
+    if (search.error !== null) {
+      this.notify(`Not a regular expression: ${search.error}`, 'warning');
+      return;
+    }
+    if (search.query === '' || (!search.running && !this.state.entries.length)) {
+      if (search.query !== '') {
+        this.notify(`Nothing matches ${search.query}`, 'warning');
+      }
+      await this.#cancel();
+      return;
+    }
+    this.#closeBar();
+    this.#push({ uri: this.state.uri, search: { query: search.query, recursive: search.recursive }, cursor: null });
+  }
+
+  /** Closes the search bar and shows what the pane showed before the search: the directory, or a search. */
+  async #cancel() {
+    const before = this.#before;
+    if (!this.#typing || !before) {
+      return;
+    }
+    this.#closeBar();
+    if (before.search) {
+      this.#showSearch(before.search, before.cursor);
+      return;
+    }
+    const { entries, hiddenCount } = this.#arrange();
+    const selection = this.#selectedNames();
+    const cursor = entries.findIndex((entry) => entry.name === before.cursor);
+    const selected = entries.filter((entry) => selection.has(entry.name)).map((entry) => entry.name);
+    Object.assign(this.state, { search: null, entries, hiddenCount, cursor: Math.max(0, cursor), selected, range: null });
+  }
+
+  /**
+   * Called by `main` when the pane stops being the active one: a search being typed is kept, as `enter`
+   * does.
+   * @returns {Promise<void>}
+   */
+  async _blur() {
+    if (this.#typing) {
+      await this.#accept();
+    }
+  }
+
+  /** Ends typing a search, if one is: the focus goes back to the listing. */
+  #closeBar() {
+    if (!this.#typing) {
+      return;
+    }
+    this.#typing = false;
+    this.#before = null;
+    if (this.state.search) {
+      this.state.search.typing = false;
+    }
+    this.focus();
+  }
+
+  /**
+   * Shows a search of the directory shown, from the entries the pane has — a tree walked again, unless it's
+   * the one walked last.
+   * @param {Query} query
+   * @param {string | null} focus The entry to put the cursor on once it's found.
+   */
+  #showSearch({ query, recursive }, focus) {
+    this.#want = focus;
+    this.state.search = { query, recursive, typing: false, running: false, scanned: 0, error: null, capped: false };
+    if (recursive) {
+      this.#startWalk();
+    }
+    this.#applyQuery();
+  }
+
+  /**
+   * Lists the entries matching the search: of the directory, or of the tree walked so far. The cursor stays
+   * on its entry while it matches — or goes to the one wanted (`#want`) once it's there — else to the
+   * first; the selection keeps what still matches.
+   */
+  #applyQuery() {
+    const search = this.state.search;
+    if (!search) {
+      return;
+    }
+    const match = matcher(search.query);
+    if (match.error !== null) {
+      if (search.error !== match.error) {
+        search.error = match.error;
+      }
+      return;
+    }
+    if (search.error !== null) {
+      search.error = null;
+    }
+    const { showHidden, sort, entries: before, cursor } = this.state;
+    const pool = search.recursive ? this.#tree?.entries ?? [] : this.#all;
+    let hiddenCount = 0;
+    let over = false;
+    /** @type {Entry[]} */
+    const matches = [];
+    for (const entry of pool) {
+      if (!match.test(search.recursive ? entry.name.slice(entry.name.lastIndexOf('/') + 1) : entry.name)) {
+        continue;
+      }
+      if (entry.hidden && !showHidden) {
+        hiddenCount++;
+      } else if (matches.length < MAX_MATCHES) {
+        matches.push(entry);
+      } else {
+        over = true;
+      }
+    }
+    const capped = over || (search.recursive && this.#tree?.capped === true);
+    if (search.capped !== capped) {
+      search.capped = capped;
+    }
+    const entries = matches.sort(comparator(sort));
+    const at = this.#want ?? before[cursor]?.name ?? null;
+    const index = at === null ? -1 : entries.findIndex((entry) => entry.name === at);
+    if (index >= 0) {
+      this.#want = null;
+    }
+    const selection = this.#selectedNames();
+    const selected = entries.filter((entry) => selection.has(entry.name)).map((entry) => entry.name);
+    Object.assign(this.state, { entries, hiddenCount, cursor: Math.max(0, index), selected, range: null });
+    if (search.recursive) {
+      this.#fillDetails().catch((error) => this.report(error));
+    }
+  }
+
+  /**
+   * Walks the directory shown for a tree search, unless the tree walked last is of it — done, or still
+   * being walked — with hidden entries as they're shown now.
+   */
+  #startWalk() {
+    const { uri, showHidden } = this.state;
+    const search = /** @type {SearchState} */ (this.state.search);
+    const tree = this.#tree;
+    if (tree && tree.root === uri && tree.showHidden === showHidden && (tree.done || !tree.stopped)) {
+      Object.assign(search, { running: !tree.done, scanned: tree.entries.length });
+      return;
+    }
+    const id = ++this.#walkId;
+    /** @type {Tree} */
+    const next = { id, root: uri, showHidden, entries: [], index: new Map(), statted: new WeakSet(), done: false, stopped: false, capped: false };
+    this.#tree = next;
+    Object.assign(search, { running: true, scanned: 0 });
+    this.#walk(next).catch((error) => this.report(error));
+  }
+
+  /**
+   * Walks a tree (`search.js`), showing the matches every `WALK_UPDATE` ms, until it's done, `MAX_WALK`
+   * entries are in, or it's no longer wanted: another tree, another listing, or no tree search shown. The
+   * file system's own hidden marks come for the whole tree at once, alongside.
+   * @param {Tree} tree
+   */
+  async #walk(tree) {
+    const generation = this.#generation;
+    const current = () => tree === this.#tree && tree.id === this.#walkId && generation === this.#generation && this.state.search?.recursive === true;
+    const controller = new AbortController();
+    /** @type {Set<string> | null} */
+    let marked = null;
+    const marking = this.fs.hiddenEntries(tree.root, { signal: controller.signal }).then((list) => {
+      marked = new Set(list);
+      if (!list.length || !current()) {
+        return;
+      }
+      for (const entry of tree.entries) {
+        entry.hidden ||= markedHidden(entry.name, /** @type {Set<string>} */ (marked));
+      }
+      if (!tree.showHidden) {
+        tree.entries = tree.entries.filter((entry) => !entry.hidden);
+      }
+      this.#applyQuery();
+    }, () => {});
+    let last = Date.now();
+    /** @param {string} path */
+    const isMarked = (path) => marked !== null && markedHidden(path, marked);
+    for await (const found of walk(this.fs, tree.root, { showHidden: tree.showHidden, current, marked: isMarked })) {
+      for (const item of found) {
+        // Found inside a directory marked hidden before the marks came.
+        const hidden = item.hidden || isMarked(item.name);
+        if (hidden && !tree.showHidden) {
+          continue;
+        }
+        /** @type {Entry} */
+        const entry = { name: item.name, type: item.type, symlink: item.symlink, executable: false, size: null, mtime: null, hidden };
+        tree.entries.push(entry);
+        tree.index.set(entry.name, entry);
+      }
+      if (tree.entries.length >= MAX_WALK) {
+        tree.capped = true;
+        break;
+      }
+      if (Date.now() - last >= WALK_UPDATE) {
+        last = Date.now();
+        /** @type {SearchState} */ (this.state.search).scanned = tree.entries.length;
+        this.#applyQuery();
+      }
+    }
+    if (!current()) {
+      tree.stopped = !tree.done;
+      controller.abort();
+      return;
+    }
+    await marking;
+    if (!current()) {
+      tree.stopped = true;
+      return;
+    }
+    tree.done = true;
+    Object.assign(/** @type {SearchState} */ (this.state.search), { running: false, scanned: tree.entries.length });
+    this.#applyQuery();
+  }
+
+  /**
+   * Fetches the details of a tree search's matches listed — they aren't known while the tree is walked —
+   * in batches, each one update, until every one listed has them; a listing sorted by size or time is
+   * sorted again then.
+   */
+  async #fillDetails() {
+    if (this.#filling) {
+      return;
+    }
+    this.#filling = true;
+    try {
+      let filled = false;
+      for (let tree = this.#tree; tree && tree === this.#tree && this.state.search?.recursive; ) {
+        /** @type {Entry[]} */
+        const pending = [];
+        for (const shown of this.state.entries) {
+          const entry = tree.index.get(shown.name);
+          if (entry && !tree.statted.has(entry)) {
+            tree.statted.add(entry);
+            pending.push(entry);
+            if (pending.length === STAT_BATCH) {
+              break;
+            }
+          }
+        }
+        if (!pending.length) {
+          break;
+        }
+        const root = tree.root;
+        await Promise.all(pending.map((entry) => this.fs.stat(this.#child(entry.name, root)).then(({ size, mtime, executable }) => {
+          Object.assign(entry, { size, mtime, executable });
+        }, () => {})));
+        if (tree !== this.#tree) {
+          break;
+        }
+        const index = new Map(this.state.entries.map((entry, i) => [entry.name, i]));
+        for (const { name, size, mtime, executable } of pending) {
+          const i = index.get(name);
+          if (i !== undefined && size !== null) {
+            Object.assign(this.state.entries[i], { size, mtime, executable });
+          }
+        }
+        filled = true;
+      }
+      const by = this.state.sort.by;
+      if (filled && (by === 'size' || by === 'modified')) {
+        this.#applyQuery();
+      }
+    } finally {
+      this.#filling = false;
+    }
+  }
+
+  /** Goes to the directory of the entry under the cursor in a search's list, the cursor on the entry. */
+  async #jump() {
+    if (this.#typing) {
+      await this.#accept();
+    }
+    const entry = this.state.entries[this.state.cursor];
+    if (!this.state.search || !entry) {
+      return;
+    }
+    const { directory, name } = this.#locate(entry.name);
+    await this.#go(canonical(directory), name);
+  }
+
+  /**
+   * An entry listed, by its name there — a path, in a tree search's list.
+   * @param {string} name
+   * @param {string} [root] The directory it's in, or under. Default: the one shown.
+   * @returns {string} Its URI.
+   */
+  #child(name, root = this.state.uri) {
+    return name.split('/').reduce(childUri, root);
+  }
+
+  /**
+   * @param {string} name An entry listed, by its name there.
+   * @returns {{ directory: string, name: string }} The URI of the directory it's in, and its own name.
+   */
+  #locate(name) {
+    const split = splitPath(name);
+    return { directory: split.directory ? this.#child(split.directory) : this.state.uri, name: split.name };
+  }
+
+  /**
+   * @param {string} name An entry listed, by its name there.
+   * @param {string} other Another name in its directory.
+   * @returns {string} That entry, as it would be named in the list.
+   */
+  #sibling(name, other) {
+    const { directory } = splitPath(name);
+    return directory ? `${directory}/${other}` : other;
+  }
+
+  /**
+   * The directory shown, for an operation that puts entries in it.
+   * @returns {string}
+   * @throws {Error} A failure in a search's list, which is no directory.
+   */
+  #here() {
+    if (this.state.search) {
+      throw failure("A search's list isn't a directory: open an entry to go to its directory first");
+    }
+    return this.#files();
   }
 
   selectAll() {
@@ -709,6 +1254,7 @@ class Pane extends Handler {
       this.notify('Nothing to paste: copy or cut something first', 'warning');
       return;
     }
+    this.#here();
     await this.#paste(content);
   }
 
@@ -719,7 +1265,7 @@ class Pane extends Handler {
       this.notify('Nothing to link to: copy or cut something first', 'warning');
       return;
     }
-    await this.#transfer('link', content.uris, this.state.uri);
+    await this.#transfer('link', content.uris, this.#here());
   }
 
   /**
@@ -750,7 +1296,7 @@ class Pane extends Handler {
       return;
     }
     const here = this.#files();
-    const uris = names.map((name) => childUri(here, name));
+    const uris = names.map((name) => this.#child(name));
     const inTrash = this.trash.contains(here);
     if (permanent !== true && this.trash.enabled && !inTrash) {
       await this.fs.createDirectory(TRASH_URI, { recursive: true });
@@ -805,7 +1351,7 @@ class Pane extends Handler {
     /** @type {Map<string, { uri: string, name: string }[]>} */
     const groups = new Map();
     for (const name of this.targets) {
-      const uri = childUri(here, name);
+      const uri = this.#child(name);
       const origin = this.trash.origin(uri);
       const up = origin === null ? null : parentUri(origin);
       if (!up) {
@@ -924,8 +1470,8 @@ class Pane extends Handler {
     if (!entry) {
       return;
     }
-    const here = this.#files();
-    const { name } = entry;
+    this.#files();
+    const { directory: here, name } = this.#locate(entry.name);
     const dot = name.lastIndexOf('.');
     const renamed = await this.openWindow(new Prompt({
       title: 'Rename',
@@ -949,7 +1495,7 @@ class Pane extends Handler {
       return;
     }
     await this.fs.rename(childUri(here, name), childUri(here, renamed));
-    await this.#changed([here], renamed);
+    await this.#changed([here], this.#sibling(entry.name, renamed));
   }
 
   /**
@@ -959,16 +1505,23 @@ class Pane extends Handler {
    * @param {string[]} names At least two, in listing order.
    */
   async #renameAll(names) {
-    const here = this.#files();
+    this.#files();
     const types = new Map(this.state.entries.map((entry) => [entry.name, entry.type]));
-    const entries = names.map((name) => ({ name, directory: types.get(name) === 'directory' }));
+    // In a tree search's list, each is renamed in its own directory.
+    const entries = names.map((listed) => {
+      const { directory: where, name } = this.#locate(listed);
+      return { where, name, directory: types.get(listed) === 'directory' };
+    });
     const count = entries.length;
     const extensions = new Set(entries.map((entry) => extension(entry.name, entry.directory)));
     /** @param {string} pattern */
-    const namesFor = (pattern) => entries.map((entry, index) => expand(pattern, { index, count, ...entry }));
-    /** @param {string} name */
-    const key = (name) => (process.platform === 'win32' ? name.toLowerCase() : name);
-    const renamed = new Set(names.map(key));
+    const namesFor = (pattern) => entries.map((entry, index) => expand(pattern, { index, count, name: entry.name, directory: entry.directory }));
+    /**
+     * @param {number} i Which entry's directory.
+     * @param {string} name
+     */
+    const key = (i, name) => `${entries[i].where}/${process.platform === 'win32' ? name.toLowerCase() : name}`;
+    const renamed = new Set(entries.map((entry, i) => key(i, entry.name)));
     const pattern = await this.openWindow(new Prompt({
       title: `Rename ${count} items`,
       message: "One name for all: $n counts from 1, $i from 0, $e is each one's extension",
@@ -978,7 +1531,7 @@ class Pane extends Handler {
         if (checkPattern(text, count)) {
           return null;
         }
-        const lines = namesFor(text).map((to, i) => `${names[i]} → ${to}`);
+        const lines = namesFor(text).map((to, i) => `${entries[i].name} → ${to}`);
         return (lines.length > 4 ? [lines[0], lines[1], '…', lines.at(-1)] : lines).join('\n');
       },
       validate: async (text) => {
@@ -987,10 +1540,10 @@ class Pane extends Handler {
         if (problem) {
           return problem;
         }
-        if (new Set(targets.map(key)).size < count) {
+        if (new Set(targets.map((name, i) => key(i, name))).size < count) {
           return 'Two would get the same name';
         }
-        const taken = await Promise.all(targets.map((name) => (renamed.has(key(name)) ? null : statOrNull(this.fs, childUri(here, name)))));
+        const taken = await Promise.all(targets.map((name, i) => (renamed.has(key(i, name)) ? null : statOrNull(this.fs, childUri(entries[i].where, name)))));
         const first = taken.findIndex(Boolean);
         return first < 0 ? null : `${targets[first]} already exists`;
       },
@@ -999,10 +1552,10 @@ class Pane extends Handler {
       return;
     }
     const targets = namesFor(pattern);
-    const moves = names.map((from, i) => ({ from, to: targets[i] })).filter(({ from, to }) => from !== to);
+    const moves = entries.map((entry, i) => ({ i, from: entry.name, to: targets[i] })).filter(({ from, to }) => from !== to);
     // A name another of them has now: all go through temporary names first.
-    const sources = new Set(moves.map(({ from }) => key(from)));
-    const swapped = moves.some(({ from, to }) => key(to) !== key(from) && sources.has(key(to)));
+    const sources = new Set(moves.map(({ i, from }) => key(i, from)));
+    const swapped = moves.some(({ i, from, to }) => key(i, to) !== key(i, from) && sources.has(key(i, to)));
     const current = moves.map(({ from }) => from);
     /** @type {string[][]} */
     const steps = swapped ? [moves.map((_, i) => `.vin-rename-${process.pid}-${Date.now()}-${i}`)] : [];
@@ -1010,8 +1563,9 @@ class Pane extends Handler {
     let done = 0;
     for (const [step, next] of steps.entries()) {
       for (const [i, name] of next.entries()) {
+        const where = entries[moves[i].i].where;
         try {
-          await this.fs.rename(childUri(here, current[i]), childUri(here, name));
+          await this.fs.rename(childUri(where, current[i]), childUri(where, name));
           current[i] = name;
           done += Number(step === steps.length - 1);
         } catch (error) {
@@ -1020,7 +1574,7 @@ class Pane extends Handler {
       }
     }
     this.#select([]);
-    await this.#changed([here], targets[0]);
+    await this.#changed([...new Set(entries.map((entry) => entry.where))], this.#sibling(names[0], targets[0]));
     this.notify(`Renamed ${done} of ${count} items`);
   }
 
@@ -1029,7 +1583,7 @@ class Pane extends Handler {
    * a name with `/` inside (`src/lib/`).
    */
   async create() {
-    const here = this.#files();
+    const here = this.#here();
     const separator = process.platform === 'win32' ? /[\\/]/ : /\//;
     /** @param {string} text */
     const parts = (text) => text.split(separator);
@@ -1070,9 +1624,16 @@ class Pane extends Handler {
     await this.#changed([here], names[0]);
   }
 
-  /** Lists the directory again, keeping the cursor on its entry, and what's still there selected. */
+  /**
+   * Lists the directory again — or searches it again, for a search's list — keeping the cursor on its
+   * entry, and what's still there selected. Not while a search is typed.
+   */
   async reload() {
-    await this.#list(this.state.uri, null);
+    const { search } = this.state;
+    if (this.#typing) {
+      return;
+    }
+    await this.#list(this.state.uri, null, search && { query: search.query, recursive: search.recursive });
   }
 
   /**
@@ -1090,6 +1651,12 @@ class Pane extends Handler {
       this.notify("Only paths can be pasted here, one per line", 'warning');
       return true;
     }
+    try {
+      this.#here();
+    } catch (error) {
+      this.report(error);
+      return true;
+    }
     this.#paste(content).catch((error) => this.report(error));
     return true;
   }
@@ -1102,8 +1669,8 @@ class Pane extends Handler {
     if (!names.length) {
       return;
     }
-    const here = this.#files();
-    this.clipboard.set(mode, names.map((name) => childUri(here, name)));
+    this.#files();
+    this.clipboard.set(mode, names.map((name) => this.#child(name)));
     this.#select([]);
     this.notify(`${mode === 'copy' ? 'Copied' : 'Cut'} ${describe(names)} — paste to ${mode === 'copy' ? 'copy' : 'move'} ${names.length === 1 ? 'it' : 'them'}`);
   }
@@ -1129,9 +1696,9 @@ class Pane extends Handler {
     if (!names.length) {
       return;
     }
-    const here = this.#files();
+    this.#files();
     this.#select([]);
-    await this.#transfer(mode, names.map((name) => childUri(here, name)), destination);
+    await this.#transfer(mode, names.map((name) => this.#child(name)), destination);
   }
 
   /**
@@ -1248,7 +1815,11 @@ class Pane extends Handler {
    */
   async #changed(uris, focus) {
     this.emit('changed', { uris: [...new Set(uris)] });
-    if (uris.some((uri) => same(uri, this.state.uri))) {
+    const { search } = this.state;
+    if (search && !this.#typing) {
+      // Its entries can be anywhere below: searched again.
+      await this.#list(this.state.uri, focus, { query: search.query, recursive: search.recursive });
+    } else if (uris.some((uri) => same(uri, this.state.uri))) {
       await this.#list(this.state.uri, focus);
     }
   }
@@ -1319,6 +1890,7 @@ class Pane extends Handler {
   #move(index) {
     const count = this.state.entries.length;
     const cursor = Math.max(0, Math.min(index, count - 1));
+    this.#want = null;
     if (count && cursor !== this.state.cursor) {
       this.state.cursor = cursor;
     }
@@ -1330,10 +1902,21 @@ class Pane extends Handler {
    * @param {string | null} focus The entry to put the cursor on; else where it was left, or the first.
    */
   async #go(uri, focus) {
-    if (await this.#list(uri, focus) !== 'listed' || this.#history[this.#index] === uri) {
+    if (await this.#list(uri, focus) === 'listed') {
+      this.#push({ uri, search: null, cursor: null });
+    }
+  }
+
+  /**
+   * Adds a step to the history after the one the pane is at, dropping any ahead — unless it's that one.
+   * @param {Place} place
+   */
+  #push(place) {
+    const here = this.#history[this.#index];
+    if (here && here.uri === place.uri && sameQuery(here.search, place.search)) {
       return;
     }
-    this.#history.splice(this.#index + 1, Infinity, uri);
+    this.#history.splice(this.#index + 1, Infinity, place);
     if (this.#history.length > HISTORY_SIZE) {
       this.#history.shift();
     }
@@ -1341,16 +1924,17 @@ class Pane extends Handler {
   }
 
   /**
-   * Moves through the history. A directory there that can't be listed any more is dropped from it.
+   * Moves through the history — a search in it is searched again, the cursor going back to its entry once
+   * it's found. A directory there that can't be listed any more is dropped from it.
    * @param {-1 | 1} delta
    */
   async #step(delta) {
     const index = this.#index + delta;
-    const uri = this.#history[index];
-    if (uri === undefined) {
+    const place = this.#history[index];
+    if (place === undefined) {
       return;
     }
-    const outcome = await this.#list(uri, null);
+    const outcome = await this.#list(place.uri, place.search ? place.cursor : null, place.search);
     if (outcome === 'listed') {
       this.#index = index;
     } else if (outcome === 'failed') {
@@ -1363,21 +1947,23 @@ class Pane extends Handler {
    * Starts listing a directory, as the latest listing.
    * @param {string} uri
    * @param {string | null} focus
+   * @param {Query | null} [search] To show a search of it instead.
    * @returns {Promise<Outcome>} Once it's shown, or not.
    */
-  #list(uri, focus) {
-    this.#listing = this.#load(uri, focus);
+  #list(uri, focus, search = null) {
+    this.#listing = this.#load(uri, focus, search);
     return this.#listing;
   }
 
   /**
-   * Lists a directory and shows it, then fetches its entries' details in batches from the top (`#details`).
-   * A failure to list is reported.
+   * Lists a directory and shows it — or a search of it — then fetches its entries' details in batches from
+   * the top (`#details`). A failure to list is reported. A search being typed ends.
    * @param {string} uri
    * @param {string | null} focus
+   * @param {Query | null} [search]
    * @returns {Promise<Outcome>} Once the listing is shown, or not.
    */
-  async #load(uri, focus) {
+  async #load(uri, focus, search = null) {
     const generation = ++this.#generation;
     const current = () => generation === this.#generation;
     /** @type {import('../../../fs/file-system').DirectoryEntry[]} */
@@ -1401,6 +1987,12 @@ class Pane extends Handler {
       // The trash shows at the top, over anything real named so.
       ? [...listed.filter((entry) => entry.name !== 'trash'), { name: 'trash', type: /** @type {FileType} */ ('directory'), symlink: false }]
       : listed;
+    const before = this.state.search;
+    // The same view again — a reload — keeps the cursor on its entry, and what's still there selected.
+    const again = uri === this.state.uri && !this.#typing && sameQuery(search, before && { query: before.query, recursive: before.recursive });
+    this.#closeBar();
+    this.#remember();
+    this.#tree = null;
     this.#all = shown.map(({ name, type, symlink, hidden }) => ({
       name,
       type,
@@ -1410,16 +2002,21 @@ class Pane extends Handler {
       mtime: null,
       hidden: isHidden({ name, hidden }) && !this.#mounted(uri, name),
     }));
+    const kept = new Set(again ? this.state.selected : []);
+    if (search) {
+      const focused = focus ?? (again ? this.state.entries[this.state.cursor]?.name ?? null : null);
+      Object.assign(this.state, { uri, status: 'ready', entries: [], cursor: 0, selected: [...kept], range: null });
+      this.#showSearch(search, focused);
+      this.#details = this.#fetchDetails(uri, this.#all, current);
+      return 'listed';
+    }
     const { entries, hiddenCount } = this.#arrange();
-    this.#remember();
     const name = focus ?? this.#positions.get(uri) ?? null;
     const found = name === null ? -1 : entries.findIndex((entry) => entry.name === name);
     // An entry gone from the same directory — deleted, moved — leaves the cursor on its row.
-    const cursor = Math.max(0, found >= 0 ? found : uri === this.state.uri ? Math.min(this.state.cursor, entries.length - 1) : 0);
-    // The same directory again keeps what's still there selected.
-    const kept = new Set(uri === this.state.uri ? this.state.selected : []);
+    const cursor = Math.max(0, found >= 0 ? found : again ? Math.min(this.state.cursor, entries.length - 1) : 0);
     const selected = entries.filter((entry) => kept.has(entry.name)).map((entry) => entry.name);
-    Object.assign(this.state, { uri, status: 'ready', entries, hiddenCount, cursor, selected, range: null });
+    Object.assign(this.state, { uri, status: 'ready', entries, hiddenCount, cursor, selected, range: null, search: null });
     this.#details = this.#fetchDetails(uri, this.#all, current);
     return 'listed';
   }
@@ -1440,6 +2037,14 @@ class Pane extends Handler {
    * selection, ending any group, less what's hidden now.
    */
   #rearrange() {
+    const search = this.state.search;
+    if (search) {
+      if (search.recursive) {
+        this.#startWalk();
+      }
+      this.#applyQuery();
+      return;
+    }
     const { entries: before, cursor } = this.state;
     const selection = this.#selectedNames();
     const { entries, hiddenCount } = this.#arrange();
@@ -1453,12 +2058,20 @@ class Pane extends Handler {
    * Remembers the entry under the cursor in the directory shown, for when the pane comes back to it.
    */
   #remember() {
-    const { uri, status, entries, cursor } = this.state;
-    if (status !== 'ready' || !entries[cursor]) {
+    const { uri, status, entries, cursor, search } = this.state;
+    const name = entries[cursor]?.name;
+    if (status !== 'ready' || name === undefined) {
+      return;
+    }
+    if (search) {
+      const place = this.#history[this.#index];
+      if (place?.search && place.uri === uri && sameQuery(place.search, { query: search.query, recursive: search.recursive })) {
+        place.cursor = name;
+      }
       return;
     }
     this.#positions.delete(uri);
-    this.#positions.set(uri, entries[cursor].name);
+    this.#positions.set(uri, name);
     if (this.#positions.size > POSITIONS_SIZE) {
       this.#positions.delete(/** @type {string} */ (this.#positions.keys().next().value));
     }
@@ -1477,7 +2090,8 @@ class Pane extends Handler {
    */
   async #fetchDetails(uri, all, current) {
     const byName = new Map(all.map((entry) => [entry.name, entry]));
-    const listed = this.state.entries.map((entry) => /** @type {Entry} */ (byName.get(entry.name)));
+    // A tree search's matches below the directory aren't among its entries.
+    const listed = this.state.entries.map((entry) => byName.get(entry.name)).filter((entry) => entry !== undefined);
     const shown = new Set(listed);
     const entries = [...listed, ...all.filter((entry) => !shown.has(entry))];
     for (let start = 0; start < entries.length; start += STAT_BATCH) {

@@ -46,5 +46,7 @@ export function visible(chars, cursor, width) {
   const start = Math.max(0, cursor - room + 1);
   const shown = cells.slice(start, start + room);
   const at = cursor - start;
-  return { before: shown.slice(0, at).join(''), at: shown[at] ?? ' ', after: shown.slice(at + 1).join('') };
+  // Spaces to the field's width, so nothing under it shows through.
+  const after = shown.slice(at + 1).join('').padEnd(room - shown.slice(0, at + 1).length, ' ');
+  return { before: shown.slice(0, at).join(''), at: shown[at] ?? ' ', after };
 }

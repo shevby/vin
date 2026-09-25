@@ -44,6 +44,12 @@ const { paths } = require('../paths');
  */
 
 /**
+ * @typedef {object} ReadDirectoryOptions
+ * @property {boolean} [attributes] Whether to find out the file system's own hidden mark (`hidden`), where
+ *   that costs more than the listing — on Windows, a process per directory. Default: true.
+ */
+
+/**
  * A change `watch` reports. Several may come for one operation; debouncing is the caller's.
  * @typedef {object} FileChange
  * @property {'created' | 'changed' | 'deleted'} type
@@ -78,7 +84,8 @@ const { paths } = require('../paths');
  *   rejects the promise instead of erroring the stream later.
  * @typedef {object} FileSystemProvider
  * @property {(uri: string) => Promise<FileStat>} stat
- * @property {(uri: string) => Promise<DirectoryEntry[]>} readDirectory In no particular order.
+ * @property {(uri: string, options?: ReadDirectoryOptions) => Promise<DirectoryEntry[]>} readDirectory In no
+ *   particular order.
  * @property {(uri: string, options?: { recursive?: boolean }) => Promise<void>} createDirectory `recursive`
  *   creates missing parents too, and succeeds if the directory exists.
  * @property {(uri: string) => Promise<Uint8Array>} readFile
@@ -96,6 +103,10 @@ const { paths } = require('../paths');
  * @property {(uri: string, listener: (change: FileChange) => void, options?: { recursive?: boolean }) => () => void}
  *   watch Reports changes to the resource, or to a directory's entries (with `recursive`, at any depth);
  *   returns the function that stops watching.
+ * @property {(uri: string, options?: { signal?: AbortSignal }) => Promise<string[]>} [hiddenEntries] Every
+ *   entry under a directory, at any depth, that the file system itself marks hidden (the Hidden attribute on
+ *   Windows) — for a tree search (2.12), where `readDirectory` would ask directory by directory — as paths
+ *   from it, `/`-separated. Left out where there's no such mark.
  * @property {(uri: string) => string} [realUri] For a scheme that is another's resources under other names
  *   (`trash:`, `src/fs/trash.js`): the URI a resource has there, so moving and copying between the two work.
  */
@@ -251,8 +262,17 @@ class FileSystem {
   }
 
   /** @type {FileSystemProvider['readDirectory']} */
-  async readDirectory(uri) {
-    return this.provider(uri).readDirectory(uri);
+  async readDirectory(uri, options) {
+    return this.provider(uri).readDirectory(uri, options);
+  }
+
+  /**
+   * What `readDirectory` would mark `hidden` in a whole tree, if the provider can tell (see
+   * `FileSystemProvider`); else none.
+   * @type {NonNullable<FileSystemProvider['hiddenEntries']>}
+   */
+  async hiddenEntries(uri, options) {
+    return (await this.provider(uri).hiddenEntries?.(uri, options)) ?? [];
   }
 
   /** @type {FileSystemProvider['createDirectory']} */

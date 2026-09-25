@@ -42,12 +42,17 @@ class TrashProvider {
    * The root is created when first listed, so an empty trash shows as one.
    * @type {FileSystemProvider['readDirectory']}
    */
-  async readDirectory(uri) {
+  async readDirectory(uri, options) {
     const real = this.realUri(uri);
     if (new URL(uri).pathname.replace(/\/+/g, '') === '') {
       await this.#local.createDirectory(real, { recursive: true });
     }
-    return this.#local.readDirectory(real);
+    return this.#local.readDirectory(real, options);
+  }
+
+  /** @type {NonNullable<FileSystemProvider['hiddenEntries']>} */
+  async hiddenEntries(uri, options) {
+    return (await this.#local.hiddenEntries?.(this.realUri(uri), options)) ?? [];
   }
 
   /** @type {FileSystemProvider['createDirectory']} */
