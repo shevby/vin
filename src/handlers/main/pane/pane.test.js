@@ -51,7 +51,7 @@ test('a pane lists its directory: directories first, then names in natural order
   assert.deepEqual(pane.state.entries.map((entry) => entry.name), ['a', 'src', 'B.md', 'file2.txt', 'file10.txt']);
   const [a, , , two] = pane.state.entries;
   assert.equal(a.type, 'directory');
-  assert.deepEqual({ ...two, mtime: 0 }, { name: 'file2.txt', type: 'file', symlink: false, executable: false, size: 4, mtime: 0 });
+  assert.deepEqual({ ...two, mtime: 0 }, { name: 'file2.txt', type: 'file', symlink: false, executable: false, size: 4, mtime: 0, hidden: false });
   assert.ok(Math.abs((two.mtime ?? 0) - Date.now()) < 60_000);
 });
 
@@ -390,6 +390,54 @@ async function openWindow(dir, config) {
     current: () => pane.state.entries[pane.state.cursor]?.name,
   };
 }
+
+test('hidden entries are listed, marked; z a hides them — and unselects them — and shows them again', async (t) => {
+  const dir = tempDir(t, { '.cache': null, '.env': '', a: '', secret: '' });
+  if (process.platform === 'win32') {
+    require('node:child_process').execFileSync('attrib', ['+h', path.join(dir, 'secret')]);
+  }
+  const { pane, press, current } = await openWindow(dir);
+  const hiddenOnes = process.platform === 'win32' ? ['.cache', '.env', 'secret'] : ['.cache', '.env'];
+  assert.deepEqual(pane.state.entries.filter((entry) => entry.hidden).map((entry) => entry.name), hiddenOnes);
+  await press('j v v');
+  assert.deepEqual([pane.state.selected, current()], [['.env', 'a'], 'secret']);
+  await press('z a');
+  assert.deepEqual(pane.state.entries.map((entry) => entry.name), process.platform === 'win32' ? ['a'] : ['a', 'secret']);
+  assert.equal(pane.state.hiddenCount, hiddenOnes.length);
+  assert.deepEqual(pane.state.selected, ['a']);
+  assert.equal(current(), process.platform === 'win32' ? 'a' : 'secret', 'the nearest entry still listed');
+  await press('z o');
+  assert.deepEqual([pane.state.entries.length, pane.state.hiddenCount], [4, 0]);
+});
+
+test('with pane.showHidden off, hidden entries are not listed', async (t) => {
+  const dir = tempDir(t, { '.env': '', a: '' });
+  const { pane } = await openWindow(dir, '{ pane: { showHidden: false } }');
+  assert.deepEqual([pane.state.entries.map((entry) => entry.name), pane.state.hiddenCount], [['a'], 1]);
+});
+
+test('sorted by size, the listing is sorted again once the sizes are in; o picks another order', async (t) => {
+  const dir = tempDir(t, { d: null, big: 'xxxx', small: 'x', middle: 'xx' });
+  const { pane, press, focus, current } = await openWindow(dir, "{ pane: { sortBy: 'size' } }");
+  const names = () => pane.state.entries.map((entry) => entry.name);
+  assert.deepEqual(names(), ['d', 'small', 'middle', 'big']);
+  await press('shift+g');
+  await press('o');
+  assert.equal(focus(), 'choiceList');
+  await press('shift+s');
+  await until(() => focus() === 'pane', 'the menu to close');
+  assert.deepEqual(names(), ['d', 'big', 'middle', 'small']);
+  assert.equal(current(), 'big', 'the cursor stays on its entry');
+  assert.deepEqual(pane.state.sort, { by: 'size', reverse: true, directoriesFirst: true });
+  await press('o');
+  await press('d');
+  await until(() => focus() === 'pane', 'the menu to close');
+  assert.deepEqual(names(), ['big', 'middle', 'small', 'd']);
+  await press('o');
+  await press('n');
+  await until(() => focus() === 'pane', 'the menu to close');
+  assert.deepEqual(names(), ['big', 'd', 'middle', 'small'], 'n: by name, A to Z');
+});
 
 test('copy and paste make copies, next to the original in its own directory; cut and paste moves, once', async (t) => {
   const dir = tempDir(t, { d: null, 'f.txt': 'f' });

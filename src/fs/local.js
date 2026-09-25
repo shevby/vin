@@ -103,6 +103,38 @@ async function copyFile(from, to, stat, { signal, progress }) {
   }
 }
 
+/** How long, in ms, listing a directory waits for its hidden entries on Windows before going without. */
+const HIDDEN_WAIT = 2000;
+
+/**
+ * The names of the entries with the Hidden attribute in a Windows directory — `fs` can't tell — from
+ * `dir /a:h /b` (`/u` makes it write UTF-16). The path goes in quotes, where `cmd` takes everything
+ * literally but `%`, which could expand a variable: a path with one goes without. Not run in the directory,
+ * which would keep it from being deleted or renamed until `cmd` exits. None on a failure (logged).
+ * @param {string} path
+ * @returns {Promise<Set<string>>}
+ */
+async function hiddenNames(path) {
+  if (path.includes('%') || path.includes('"')) {
+    return new Set();
+  }
+  try {
+    const { stdout } = await execFile('cmd.exe', ['/d /u /c dir /a:h /b "' + path + '"'], {
+      encoding: 'buffer',
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+      timeout: HIDDEN_WAIT,
+    });
+    return new Set(stdout.toString('utf16le').split(/\r?\n/).filter(Boolean));
+  } catch (error) {
+    // 1: none found.
+    if (/** @type {{ code?: unknown }} */ (error).code !== 1) {
+      log.error(`Finding the hidden entries of ${path} failed:`, error);
+    }
+    return new Set();
+  }
+}
+
 /** Drive letters. */
 const LETTERS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
 
@@ -149,6 +181,8 @@ async function listDrives({ command = ['fsutil', 'fsinfo', 'drives'], wait = PRO
 class LocalProvider {
   /** Whether executables are told by extension, as on Windows, rather than by execute bits. */
   #byExtension;
+  /** Whether entries have the Hidden attribute — on Windows itself, whatever `platform` says. */
+  #attributes = process.platform === 'win32';
 
   /**
    * @param {object} [options] For tests.
@@ -203,10 +237,14 @@ class LocalProvider {
       return (await listDrives()).map((letter) => ({ name: letter.toLowerCase(), type: /** @type {const} */ ('directory'), symlink: false }));
     }
     const path = paths.fromUri(uri);
-    const entries = await fs.promises.readdir(path, { withFileTypes: true });
+    const [entries, hidden] = await Promise.all([
+      fs.promises.readdir(path, { withFileTypes: true }),
+      this.#attributes ? hiddenNames(path) : new Set(),
+    ]);
     return Promise.all(entries.map(async (entry) => {
+      const mark = hidden.has(entry.name) ? { hidden: true } : {};
       if (!entry.isSymbolicLink()) {
-        return { name: entry.name, type: typeOf(entry), symlink: false };
+        return { name: entry.name, type: typeOf(entry), symlink: false, ...mark };
       }
       /** @type {FileType} */
       let type = 'unknown';
@@ -215,7 +253,7 @@ class LocalProvider {
       } catch {
         // A broken link.
       }
-      return { name: entry.name, type, symlink: true };
+      return { name: entry.name, type, symlink: true, ...mark };
     }));
   }
 

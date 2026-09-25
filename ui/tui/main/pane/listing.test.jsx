@@ -79,7 +79,7 @@ test('narrow panes drop the modified column, then the size one', () => {
 
 test('markers follow ls -F', () => {
   /** @param {Partial<import('../../../../src/handlers/main/pane/pane.js').Entry>} fields */
-  const entry = (fields) => ({ name: 'x', type: /** @type {const} */ ('file'), symlink: false, executable: false, size: null, mtime: null, ...fields });
+  const entry = (fields) => ({ name: 'x', type: /** @type {const} */ ('file'), symlink: false, executable: false, size: null, mtime: null, hidden: false, ...fields });
   assert.equal(marker(entry({})), '');
   assert.equal(marker(entry({ type: 'directory' })), '/');
   assert.equal(marker(entry({ type: 'directory', symlink: true })), '/');
@@ -134,6 +134,25 @@ test('the cursor line is inverse in the active pane, dimmed in the other, in the
   assert.ok(row.includes('\x1b[38;5;74m'));
 });
 
+test('hidden entries are faded; the bottom border says the order, when it is not by name, and how many are hidden', async (t) => {
+  const level = chalk.level;
+  chalk.level = 2;
+  t.after(() => {
+    chalk.level = level;
+  });
+  const dir = tempDir(t, { '.env': '', a: '' });
+  const { main, lines } = await setup(t, dir);
+  const screen = await lines();
+  const row = (/** @type {string} */ name) => screen.find((line) => line.includes(name)) ?? '';
+  // SGR 2: faint.
+  assert.ok(row('.env').includes('[2m.env'), JSON.stringify(row('.env')));
+  assert.ok(!row('a  ').includes('[2m'), JSON.stringify(row('a  ')));
+  main.left.sort('size', true);
+  main.left.hideHiddenEntries();
+  const bottom = (await lines()).find((line) => line.startsWith('') && line.includes('╰')) ?? '';
+  assert.match(bottom.replace(/\[[\d;]*m/g, ''), /^╰─ size, largest first · 1 hidden ─+╯╭?/);
+});
+
 test('selected rows get a check in a gutter shown while anything is selected; the border counts them', async (t) => {
   const dir = tempDir(t, { a: '', b: '', c: '', d: '' });
   const { main, lines } = await setup(t, dir);
@@ -154,7 +173,7 @@ test('selected rows get a check in a gutter shown while anything is selected; th
 });
 
 test('selectionCount counts the group being selected, and each entry once', () => {
-  const entries = ['a', 'b', 'c', 'd'].map((name) => ({ name, type: /** @type {const} */ ('file'), symlink: false, executable: false, size: null, mtime: null }));
+  const entries = ['a', 'b', 'c', 'd'].map((name) => ({ name, type: /** @type {const} */ ('file'), symlink: false, executable: false, size: null, mtime: null, hidden: false }));
   assert.equal(selectionCount(entries, ['a', 'c'], null, 0), 2);
   assert.equal(selectionCount(entries, ['a', 'c'], 3, 1), 4);
   assert.equal(selectionCount(entries, [], 2, 2), 1);

@@ -81,6 +81,18 @@ test('stat and readDirectory type entries, following symlinks', async (t) => {
   await rejectsWith(local.readDirectory(uri('a.txt')), 'ENOTDIR');
 });
 
+test('on Windows, readDirectory marks entries with the Hidden attribute, in any directory name', { skip: process.platform !== 'win32' }, async (t) => {
+  const { dir, uri } = tempDir(t);
+  const odd = 'a & b ^ c ! (d) é';
+  fs.mkdirSync(path.join(dir, odd));
+  for (const name of ['hïdden ☃', 'plain', '.dot']) {
+    fs.writeFileSync(path.join(dir, odd, name), '');
+  }
+  require('node:child_process').execFileSync('attrib', ['+h', path.join(dir, odd, 'hïdden ☃')]);
+  const entries = await local.readDirectory(uri(odd));
+  assert.deepEqual(entries.map((entry) => [entry.name, entry.hidden === true]).sort(), [['.dot', false], ['hïdden ☃', true], ['plain', false]]);
+});
+
 test('stat tells executables: by execute bit on Unix, by extension on Windows', async (t) => {
   const { dir, uri } = tempDir(t);
   for (const name of ['run.sh', 'run.EXE', 'run.bat', 'app.js', 'notes.txt']) {

@@ -319,7 +319,7 @@ class Config {
     if (groups.length) {
       lines.push(
         '  // Colors, by the handler or plugin that draws them. fg and bg are 0 to 255, "#rrggbb", a name ("blue",',
-        '  // "redBright"), or "default" (the terminal\'s own); bold, italic, underline, and inverse are true or false.',
+        '  // "redBright"), or "default" (the terminal\'s own); bold, italic, underline, inverse, and dim are true or false.',
         '  // An entry changes only what it names: { fg: 33 } keeps the rest of the default.',
         `  // ${COLORS}: {`,
       );
