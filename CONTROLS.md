@@ -20,7 +20,7 @@ Keybindings — built-in, from plugins, and in user config — use VS Code-style
 - `Space` to open the context menu for the selected file or folder.
 - `:` opens the command line.
 - `Escape` closes the window on top (a dialog, a menu), never the main window; in a pane it unselects (see Panes).
-- `z z` quits — for now: it goes once the command line brings `:q` (6.2).
+- `z z` quits — for now: it goes once the command line brings `:q` (6.2). While jobs run, it asks first (starting on Stay), and cancels them.
 - `ctrl+c`, `ctrl+x`, `ctrl+v` are copy, cut, and paste, as in Windows and Linux file managers — and on macOS `cmd+c`, `cmd+x`, `cmd+v` as well (see Files). `ctrl+c` doesn't quit.
 - A message on the bottom line stays until the next key, which clears it and still does its job. While the message popup is up (several messages, or one too long for the line), any key only dismisses it.
 - Everything else: TBD, added as it's built and tried out.
@@ -59,6 +59,12 @@ Files — acting on the selected entries, or else the one under the cursor:
 - The same keys on two or more selected entries rename them all with one name, a pattern: `$n` counts from 1, `$i` from 0 — both padded with zeros to the digits of how many there are (`01`…`24`; `001`…`100`) — `$e` is each one's extension, `$$` is a `$`. The pattern is the whole name, so it starts with the extension they share (`.mkv`, the cursor before it), or `$e` if they differ: typing `Attack_on_titan_s1e$n` gives `Attack_on_titan_s1e01.mkv`, `…e02.mkv`, …, previewed below as you type. Entries go in the order listed.
 - `a` — create a file, or a directory if the name ends with `/`; `/` inside a name creates the directories on the way (`src/lib/`).
 - Every one of these keys can be changed in the config's `keybindings`, like any other.
+
+Jobs — copying, moving, deleting, and restoring run in the background, so keys keep working meanwhile:
+
+- A job that runs longer than a moment shows in a strip above the message line: the entry it's on, what it does, and how many of how many (`notes.txt ── copy ──> 2/5`), where to, and a progress bar — in bytes for copies and moves, whose total is added up as it goes (until then the bar shows what's done, `12 M`), and in entries for deletions. Several share the strip side by side; what doesn't fit is counted in the last box.
+- A question about a name already there comes up as usual; the job's bar says it's waiting for the answer.
+- `t` — the jobs window: the running jobs and the last 20 over, each with its progress or how it ended. `j`/`k` (the arrows) and `g g`/`shift+g` (`Home`/`End`) move; `d d` or `Delete` cancels the highlighted job, leaving what it has done — minus a file half copied, and a folder half moved to another drive, which stays where it was; a deletion stops between entries. `shift+c` clears the jobs that are over; `t`, `q`, or `Escape` closes it.
 
 Switching panes, as in vifm:
 

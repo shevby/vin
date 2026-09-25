@@ -1,5 +1,6 @@
 import { ChoiceList } from './choice-list/index.js';
 import { Confirm } from './confirm/index.js';
+import { Jobs } from './jobs/index.js';
 import { Main } from './main/index.js';
 import { Prompt } from './prompt/index.js';
 
@@ -8,4 +9,4 @@ import { Prompt } from './prompt/index.js';
  * of a kind missing here is drawn as a placeholder naming it.
  * @type {{ [kind: string]: import('./common/windows/windows.jsx').WindowComponent }}
  */
-export const windows = { main: Main, confirm: Confirm, prompt: Prompt, choiceList: ChoiceList };
+export const windows = { main: Main, confirm: Confirm, prompt: Prompt, choiceList: ChoiceList, jobs: Jobs };

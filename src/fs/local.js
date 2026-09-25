@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const nodePath = require('node:path');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
+const { pipeline } = require('node:stream/promises');
 const { paths } = require('../paths');
 const { log } = require('../log');
 const { fsError } = require('./file-system');
@@ -53,6 +54,52 @@ async function lstatOrNull(path) {
       return null;
     }
     throw error;
+  }
+}
+
+/**
+ * Files at least this big are copied in chunks, to show progress and stop midway; smaller ones in one go,
+ * the OS's fastest way.
+ */
+const CHUNKED = 8 * 1024 * 1024;
+
+/** The size of each chunk. */
+const CHUNK = 1024 * 1024;
+
+/**
+ * Copies one file where nothing is, keeping its timestamps — in chunks if it's big and someone wants to
+ * know how it goes, so a cancel stops it midway and removes what was written.
+ * @param {string} from
+ * @param {string} to
+ * @param {fs.Stats} stat `from`'s.
+ * @param {import('./file-system').TransferOptions} options
+ */
+async function copyFile(from, to, stat, { signal, progress }) {
+  if (stat.size < CHUNKED) {
+    await fs.promises.copyFile(from, to, fs.constants.COPYFILE_EXCL);
+  } else {
+    const handle = await fs.promises.open(to, 'wx', stat.mode);
+    try {
+      await pipeline(
+        fs.createReadStream(from, { highWaterMark: CHUNK }),
+        async function* count(chunks) {
+          for await (const chunk of chunks) {
+            progress?.(chunk.length);
+            yield chunk;
+          }
+        },
+        handle.createWriteStream(),
+        { signal },
+      );
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await fs.promises.rm(to, { force: true });
+      throw error;
+    }
+  }
+  await fs.promises.utimes(to, stat.atimeMs / 1000, stat.mtimeMs / 1000);
+  if (stat.size < CHUNKED) {
+    progress?.(stat.size);
   }
 }
 
@@ -229,7 +276,7 @@ class LocalProvider {
   }
 
   /** @type {FileSystemProvider['rename']} */
-  async rename(fromUri, toUri, { overwrite = false } = {}) {
+  async rename(fromUri, toUri, { overwrite = false, ...options } = {}) {
     const from = paths.fromUri(fromUri);
     const to = paths.fromUri(toUri);
     await this.#clear(from, to, overwrite);
@@ -239,33 +286,51 @@ class LocalProvider {
       if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EXDEV') {
         throw error;
       }
-      // Another drive or mount: copy, then delete the original.
-      await this.#copy(from, to);
+      // Another drive or mount: copy, then delete the original — or, if the copy fails, what it made.
+      try {
+        await this.#copy(from, to, options);
+      } catch (copyError) {
+        await fs.promises.rm(to, { recursive: true, force: true }).catch((cleanup) => log.error(`Removing a half-moved ${to}:`, cleanup));
+        throw copyError;
+      }
       await fs.promises.rm(from, { recursive: true });
     }
   }
 
   /** @type {NonNullable<FileSystemProvider['copy']>} */
-  async copy(fromUri, toUri, { overwrite = false } = {}) {
+  async copy(fromUri, toUri, { overwrite = false, ...options } = {}) {
     const from = paths.fromUri(fromUri);
     const to = paths.fromUri(toUri);
     if (await this.#clear(from, to, overwrite)) {
       throw fsError('EINVAL', "Can't copy a file onto itself", { path: from, dest: to });
     }
-    await this.#copy(from, to);
+    await this.#copy(from, to, options);
   }
 
   /**
+   * Copies a tree with `fs.cp`, except its files, which `copyFile()` copies as `cp` comes to each, to tell
+   * how it goes and to stop between files — or within a big one.
    * @param {string} from
    * @param {string} to Nothing there.
+   * @param {Omit<import('./file-system').TransferOptions, 'overwrite'>} options
    */
-  async #copy(from, to) {
+  async #copy(from, to, options) {
+    const { signal } = options;
     await fs.promises.cp(from, to, {
       recursive: true,
       errorOnExist: true,
       force: false,
       preserveTimestamps: true,
       verbatimSymlinks: true,
+      filter: async (source, target) => {
+        signal?.throwIfAborted();
+        const stat = await fs.promises.lstat(source);
+        if (!stat.isFile()) {
+          return true;
+        }
+        await copyFile(source, target, stat, options);
+        return false;
+      },
     });
   }
 
