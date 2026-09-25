@@ -8,8 +8,8 @@ import { useBorder, useStyle } from '../common/theme/index.js';
 const MAX_WIDTH = 60;
 
 /**
- * The window of a `Prompt` handler (`src/handlers/prompt/`): the question, the text being edited, and the
- * validation error, if any.
+ * The window of a `Prompt` handler (`src/handlers/prompt/`): the question, the text being edited, the
+ * validation error, if any, and the preview of what the text would do, dimmed, each of its lines cut to fit.
  * @param {{ path: string }} props
  */
 export function Prompt({ path }) {
@@ -18,11 +18,13 @@ export function Prompt({ path }) {
   const title = useSelector(store, (state) => /** @type {string | null} */ (state.title ?? null));
   const message = useSelector(store, (state) => /** @type {string | null} */ (state.message ?? null));
   const error = useSelector(store, (state) => /** @type {string | null} */ (state.error ?? null));
+  const preview = useSelector(store, (state) => /** @type {string | null} */ (state.preview ?? null));
   const border = useBorder();
   const fieldBorder = useBorder('core.hint');
   const heading = useStyle('core.title');
   const text = useStyle('core.window');
   const failure = useStyle('core.error');
+  const hint = useStyle('core.hint');
   // The borders and padding of both boxes take 8 columns.
   const width = Math.max(10, Math.min(MAX_WIDTH, columns - 8));
   return (
@@ -33,6 +35,12 @@ export function Prompt({ path }) {
         <TextField path={`${path}.input`} width={width} />
       </Box>
       {error && <Text {...failure}>{error}</Text>}
+      {preview && preview.split('\n').map((line, i) => (
+        // Lines of a preview don't move, so their index is their key.
+        <Box key={i} width={width + 4}>
+          <Text {...hint} wrap="truncate-end">{line}</Text>
+        </Box>
+      ))}
     </Box>
   );
 }

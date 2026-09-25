@@ -7,6 +7,7 @@ const ChoiceList = require('../../choice-list/choice-list');
 const Confirm = require('../../confirm/confirm');
 const Prompt = require('../../prompt/prompt');
 const { transfer, within, same, statOrNull } = require('./operations');
+const { checkPattern, expand, extension } = require('./pattern');
 
 /**
  * @typedef {import('../../../fs/file-system').FileType} FileType
@@ -148,9 +149,10 @@ function canonical(uri) {
  * and pasted — as copies, moved, or as symlinks — into any pane's directory, or copied or moved straight to
  * a directory (the other pane's, through `main`); a name already there is asked about (`operations.js`).
  * Deleting moves entries to the trash, a directory set in `pane.trash`, or else deletes them for good —
- * after asking, unless `pane.confirmDelete` is off. Entries are renamed and created in a prompt. A pane
- * reloads after its own operations, and emits `changed` with the directories they changed, which `main`
- * reloads the other pane for; watching for changes made elsewhere is 2.15.
+ * after asking, unless `pane.confirmDelete` is off. Entries are renamed and created in a prompt — several
+ * renamed with one name, a pattern (2.8, `pattern.js`). A pane reloads after its own operations, and emits
+ * `changed` with the directories they changed, which `main` reloads the other pane for; watching for
+ * changes made elsewhere is 2.15.
  * @extends {Handler<PaneState>}
  */
 class Pane extends Handler {
@@ -186,7 +188,7 @@ class Pane extends Handler {
       { method: 'copyTo', title: 'Copy to a directory', description: 'Copies the entries to a path or URI' },
       { method: 'moveTo', title: 'Move to a directory', description: 'Moves the entries to a path or URI' },
       { method: 'delete', title: 'Delete', description: 'Moves the entries to the trash, if pane.trash is set; else, or with true, deletes them for good' },
-      { method: 'rename', title: 'Rename', description: 'Renames the entry under the cursor' },
+      { method: 'rename', title: 'Rename', description: 'Renames the entry under the cursor, or the ones selected with one name: $n counts from 1, $i from 0, $e is the extension' },
       { method: 'create', title: 'Create a file or directory', description: 'A name ending with / is a directory; one with / inside creates the directories on the way' },
       { method: 'reload', title: 'Reload', description: 'Lists the directory again' },
     ],
@@ -628,11 +630,16 @@ class Pane extends Handler {
   }
 
   /**
-   * Renames the entry under the cursor, in a prompt that starts with its name, the cursor before its
-   * extension. Several entries at once are 2.8's.
+   * Renames the targets: one in a prompt that starts with its name, the cursor before its extension; two
+   * or more with one name, a pattern (`renameAll`).
    */
   async rename() {
-    const entry = this.state.entries[this.state.cursor];
+    const names = this.targets;
+    if (names.length > 1) {
+      await this.#renameAll(names);
+      return;
+    }
+    const entry = this.state.entries.find((candidate) => candidate.name === names[0]);
     if (!entry) {
       return;
     }
@@ -662,6 +669,78 @@ class Pane extends Handler {
     }
     await this.fs.rename(childUri(here, name), childUri(here, renamed));
     await this.#changed([here], renamed);
+  }
+
+  /**
+   * Renames several entries with one name, a pattern (`pattern.js`: `$n`, `$i`, `$e`), in listing order;
+   * the prompt previews the names it gives and refuses one taken by an entry not being renamed. It starts
+   * with the extension they share, or else `$e`. Names are swapped among them through temporary ones.
+   * @param {string[]} names At least two, in listing order.
+   */
+  async #renameAll(names) {
+    const here = this.#files();
+    const types = new Map(this.state.entries.map((entry) => [entry.name, entry.type]));
+    const entries = names.map((name) => ({ name, directory: types.get(name) === 'directory' }));
+    const count = entries.length;
+    const extensions = new Set(entries.map((entry) => extension(entry.name, entry.directory)));
+    /** @param {string} pattern */
+    const namesFor = (pattern) => entries.map((entry, index) => expand(pattern, { index, count, ...entry }));
+    /** @param {string} name */
+    const key = (name) => (process.platform === 'win32' ? name.toLowerCase() : name);
+    const renamed = new Set(names.map(key));
+    const pattern = await this.openWindow(new Prompt({
+      title: `Rename ${count} items`,
+      message: "One name for all: $n counts from 1, $i from 0, $e is each one's extension",
+      value: extensions.size === 1 ? [...extensions][0] : '$e',
+      cursor: 0,
+      preview: (text) => {
+        if (checkPattern(text, count)) {
+          return null;
+        }
+        const lines = namesFor(text).map((to, i) => `${names[i]} → ${to}`);
+        return (lines.length > 4 ? [lines[0], lines[1], '…', lines.at(-1)] : lines).join('\n');
+      },
+      validate: async (text) => {
+        const targets = namesFor(text);
+        const problem = checkPattern(text, count) ?? targets.map(checkName).find(Boolean);
+        if (problem) {
+          return problem;
+        }
+        if (new Set(targets.map(key)).size < count) {
+          return 'Two would get the same name';
+        }
+        const taken = await Promise.all(targets.map((name) => (renamed.has(key(name)) ? null : statOrNull(this.fs, childUri(here, name)))));
+        const first = taken.findIndex(Boolean);
+        return first < 0 ? null : `${targets[first]} already exists`;
+      },
+    }));
+    if (typeof pattern !== 'string') {
+      return;
+    }
+    const targets = namesFor(pattern);
+    const moves = names.map((from, i) => ({ from, to: targets[i] })).filter(({ from, to }) => from !== to);
+    // A name another of them has now: all go through temporary names first.
+    const sources = new Set(moves.map(({ from }) => key(from)));
+    const swapped = moves.some(({ from, to }) => key(to) !== key(from) && sources.has(key(to)));
+    const current = moves.map(({ from }) => from);
+    /** @type {string[][]} */
+    const steps = swapped ? [moves.map((_, i) => `.vin-rename-${process.pid}-${Date.now()}-${i}`)] : [];
+    steps.push(moves.map(({ to }) => to));
+    let done = 0;
+    for (const [step, next] of steps.entries()) {
+      for (const [i, name] of next.entries()) {
+        try {
+          await this.fs.rename(childUri(here, current[i]), childUri(here, name));
+          current[i] = name;
+          done += Number(step === steps.length - 1);
+        } catch (error) {
+          this.report(error);
+        }
+      }
+    }
+    this.#select([]);
+    await this.#changed([here], targets[0]);
+    this.notify(`Renamed ${done} of ${count} items`);
   }
 
   /**

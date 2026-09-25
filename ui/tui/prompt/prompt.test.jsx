@@ -27,3 +27,13 @@ test('a secret prompt shows dots; Escape dismisses it', async (t) => {
   await type('escape');
   assert.equal(await result, null);
 });
+
+test('a prompt previews what its text would do, below it, as it changes', async (t) => {
+  const preview = (/** @type {string} */ value) => (value ? `a.mkv → ${value}1.mkv\nb.mkv → ${value}2.mkv` : null);
+  const { frame, type } = await renderDialog(t, new Prompt({ message: 'Rename', value: 'x', preview }));
+  assert.match(await frame(), /│ a\.mkv → x1\.mkv +│.*\n.*│ b\.mkv → x2\.mkv +│/, 'a line each, below the text');
+  await type('y');
+  assert.match(await frame(), /a\.mkv → xy1\.mkv/);
+  await type('backspace', 'backspace');
+  assert.doesNotMatch(await frame(), /mkv/);
+});
