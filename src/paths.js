@@ -249,6 +249,11 @@ class Paths {
    * @returns {string}
    */
   displayUri(uri) {
+    if (/^trash:/i.test(uri)) {
+      // vin's trash (src/trash.js), shown where it's found.
+      const names = new URL(uri).pathname.split('/').filter(Boolean).map(decodeURIComponent);
+      return ['/trash', ...names].join('/');
+    }
     if (!/^file:/i.test(uri)) {
       return uri;
     }

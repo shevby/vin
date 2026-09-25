@@ -6,7 +6,8 @@ const { opener } = require('../../../open');
 const ChoiceList = require('../../choice-list/choice-list');
 const Confirm = require('../../confirm/confirm');
 const Prompt = require('../../prompt/prompt');
-const { transfer, within, same, statOrNull } = require('./operations');
+const { transfer, same, statOrNull } = require('./operations');
+const { TRASH_URI } = require('../../../trash');
 const { checkPattern, expand, extension } = require('./pattern');
 
 /**
@@ -95,6 +96,15 @@ function checkName(name) {
   return name === '.' || name === '..' ? `${name} isn't a name` : null;
 }
 
+/**
+ * The top of the local file system, where the trash shows as `trash` (2.9): the list of drives on Windows,
+ * `/` elsewhere.
+ * @returns {string}
+ */
+function rootUri() {
+  return paths.drives ?? 'file:///';
+}
+
 /** Natural order (`file2` before `file10`), ignoring case and accents. */
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -148,8 +158,10 @@ function canonical(uri) {
  * File operations (2.7): entries are copied or cut to vin's clipboard (`this.clipboard`, `src/clipboard.js`)
  * and pasted — as copies, moved, or as symlinks — into any pane's directory, or copied or moved straight to
  * a directory (the other pane's, through `main`); a name already there is asked about (`operations.js`).
- * Deleting moves entries to the trash, a directory set in `pane.trash`, or else deletes them for good —
- * after asking, unless `pane.confirmDelete` is off. Entries are renamed and created in a prompt — several
+ * Deleting moves entries to the trash (`this.trash`, `src/trash.js`), if `pane.trash` is on, or else deletes
+ * them for good — after asking, unless `pane.confirmDelete` is off. The trash shows as `/trash`: an entry
+ * `trash` at the top (the list of drives on Windows, `/` elsewhere; a real `/trash` is hidden by it), and
+ * a path to type; it's the `trash:` scheme, where `restore` puts entries back where they came from. Entries are renamed and created in a prompt — several
  * renamed with one name, a pattern (2.8, `pattern.js`). A pane reloads after its own operations, and emits
  * `changed` with the directories they changed, which `main` reloads the other pane for; watching for
  * changes made elsewhere is 2.15.
@@ -191,6 +203,8 @@ class Pane extends Handler {
       { method: 'rename', title: 'Rename', description: 'Renames the entry under the cursor, or the ones selected with one name: $n counts from 1, $i from 0, $e is the extension' },
       { method: 'create', title: 'Create a file or directory', description: 'A name ending with / is a directory; one with / inside creates the directories on the way' },
       { method: 'reload', title: 'Reload', description: 'Lists the directory again' },
+      { method: 'restore', title: 'Restore from the trash', description: 'Puts entries in /trash back where they were deleted from' },
+      { method: 'emptyTrash', title: 'Empty the trash', description: 'Deletes everything in /trash for good' },
     ],
     keybindings: [
       { key: 'up', command: 'pane.up' },
@@ -241,13 +255,20 @@ class Pane extends Handler {
       { key: 'c i w', command: 'pane.rename' },
       { key: 'c c', command: 'pane.rename' },
       { key: 'a', command: 'pane.create' },
+      { key: 'r', command: 'pane.restore' },
     ],
     configuration: [
       {
         key: 'trash',
+        type: 'boolean',
+        default: false,
+        description: 'Deleting moves entries to the trash, shown as /trash, where r restores them; off, deleting is for good. shift+Delete always deletes for good, as does deleting in the trash.',
+      },
+      {
+        key: 'trashDirectory',
         type: 'string',
         default: '',
-        description: "A directory deleting moves entries to, e.g. '~/.trash' (created when first needed); empty: deleting is permanent. shift+Delete always deletes for good, as does deleting inside the trash.",
+        description: "Where the trash keeps entries; empty: .vin/trash in vin's folder. A relative path is relative to vin's folder. Where each came from is kept in .vin/trash.json.",
       },
       {
         key: 'confirmDelete',
@@ -407,7 +428,7 @@ class Pane extends Handler {
   async enter() {
     const entry = this.state.entries[this.state.cursor];
     if (entry?.type === 'directory') {
-      await this.#go(canonical(childUri(this.state.uri, entry.name)), null);
+      await this.#go(this.#mounted(this.state.uri, entry.name) ? TRASH_URI : canonical(childUri(this.state.uri, entry.name)), null);
     }
   }
 
@@ -416,7 +437,7 @@ class Pane extends Handler {
    * Windows, to the list of drives (2.4). A root has none.
    */
   async toParent() {
-    const up = parentUri(this.state.uri);
+    const up = this.state.uri === TRASH_URI ? { uri: rootUri(), name: 'trash' } : parentUri(this.state.uri);
     if (up) {
       await this.#go(up.uri, up.name);
     }
@@ -457,6 +478,9 @@ class Pane extends Handler {
   #resolve(target) {
     if (typeof target !== 'string') {
       throw new TypeError(`Expected a path or URI, got ${JSON.stringify(target)}`);
+    }
+    if (/^[\\/]trash(?=$|[\\/])/.test(target) && this.trash.enabled) {
+      return target.slice('/trash'.length).split(/[\\/]/).filter(Boolean).reduce(childUri, TRASH_URI);
     }
     // A scheme of two letters at least: `C:` starts a Windows path.
     return /^[a-z][a-z\d+.-]+:/i.test(target) ? canonical(target) : paths.resolveUri(target, this.state.uri);
@@ -585,18 +609,19 @@ class Pane extends Handler {
    * @param {boolean} [permanent] Delete for good even with a trash. Default: false.
    */
   async delete(permanent = false) {
-    const names = this.targets;
+    const names = this.#operands();
     if (!names.length) {
       return;
     }
     const here = this.#files();
     const uris = names.map((name) => childUri(here, name));
-    const trash = permanent === true ? null : this.#trash();
-    if (trash && !within(here, trash)) {
-      await this.fs.createDirectory(trash, { recursive: true });
-      const outcome = await transfer(this.fs, { mode: 'move', sources: uris, destination: trash, resolve: async () => ({ action: 'keepBoth', all: true }) });
+    const inTrash = this.trash.contains(here);
+    if (permanent !== true && this.trash.enabled && !inTrash) {
+      await this.fs.createDirectory(TRASH_URI, { recursive: true });
+      const outcome = await transfer(this.fs, { mode: 'move', sources: uris, destination: TRASH_URI, resolve: async () => ({ action: 'keepBoth', all: true }) });
       outcome.failures.forEach((error) => this.report(error));
-      await this.#changed([here, trash], null);
+      outcome.created.forEach((name, i) => this.trash.record(childUri(TRASH_URI, name), outcome.done[i]));
+      await this.#changed([here, TRASH_URI], null);
       if (outcome.created.length) {
         this.notify(`Moved ${describe(names.length === outcome.created.length ? names : outcome.created)} to the trash`);
       }
@@ -613,20 +638,104 @@ class Pane extends Handler {
         return;
       }
     }
+    const deleted = await this.#deleteForGood(uris);
+    await this.#changed([here], null);
+    if (deleted.length) {
+      this.notify(`Deleted ${describe(deleted.map((uri) => names[uris.indexOf(uri)]))}`);
+    }
+  }
+
+  /**
+   * Puts entries in the trash back where they were deleted from — creating the directories on the way,
+   * asking about a name taken there. Only in `/trash` itself.
+   */
+  async restore() {
+    const here = this.state.uri;
+    if (here !== TRASH_URI) {
+      this.notify('Only entries in /trash can be restored: go there first', 'warning');
+      return;
+    }
+    /** @type {Map<string, { uri: string, name: string }[]>} */
+    const groups = new Map();
+    for (const name of this.targets) {
+      const uri = childUri(here, name);
+      const origin = this.trash.origin(uri);
+      const up = origin === null ? null : parentUri(origin);
+      if (!up) {
+        this.report(failure(`Can't restore ${name}: where it came from isn't recorded`));
+        continue;
+      }
+      groups.set(up.uri, [...groups.get(up.uri) ?? [], { uri, name: up.name }]);
+    }
+    this.#select([]);
+    /** @type {string[]} */
+    const restored = [];
+    for (const [directory, sources] of groups) {
+      try {
+        await this.fs.createDirectory(directory, { recursive: true });
+      } catch (error) {
+        this.report(error);
+        continue;
+      }
+      const outcome = await transfer(this.fs, { mode: 'move', sources, destination: directory, resolve: (conflict) => this.#ask('move', conflict) });
+      outcome.failures.forEach((error) => this.report(error));
+      this.trash.forget(outcome.done);
+      restored.push(...outcome.created);
+      if (outcome.cancelled) {
+        break;
+      }
+    }
+    await this.#changed([here, ...groups.keys()], null);
+    if (restored.length) {
+      this.notify(`Restored ${describe(restored)}`);
+    }
+  }
+
+  /** Deletes everything in the trash for good, after asking (`pane.confirmDelete`). */
+  async emptyTrash() {
+    const uris = (await this.fs.readDirectory(TRASH_URI)).map((entry) => childUri(TRASH_URI, entry.name));
+    if (!uris.length) {
+      this.notify('The trash is empty');
+      return;
+    }
+    if (this.config.get('pane.confirmDelete')) {
+      const confirmed = await this.openWindow(new Confirm({
+        title: 'Empty the trash',
+        message: `Delete ${uris.length === 1 ? 'the 1 item' : `all ${uris.length} items`} in the trash for good?`,
+        yes: 'Empty',
+        no: 'Cancel',
+      }));
+      if (confirmed !== true) {
+        return;
+      }
+    }
+    const deleted = await this.#deleteForGood(uris);
+    await this.#changed([TRASH_URI], null);
+    this.notify(deleted.length === uris.length ? 'Emptied the trash' : `Deleted ${deleted.length} of ${uris.length} items in the trash`);
+  }
+
+  /**
+   * Deletes entries for good — whole trees — reporting each that fails; entries in the trash leave its
+   * records.
+   * @param {string[]} uris
+   * @returns {Promise<string[]>} The ones deleted.
+   */
+  async #deleteForGood(uris) {
     /** @type {string[]} */
     const deleted = [];
-    for (const [i, uri] of uris.entries()) {
+    for (const uri of uris) {
       try {
         await this.fs.delete(uri, { recursive: true });
-        deleted.push(names[i]);
+        deleted.push(uri);
       } catch (error) {
         this.report(error);
       }
     }
-    await this.#changed([here], null);
-    if (deleted.length) {
-      this.notify(`Deleted ${describe(deleted)}`);
+    const trashed = deleted.filter((uri) => this.trash.contains(uri));
+    if (trashed.length) {
+      this.trash.forget(trashed);
     }
+    return deleted;
   }
 
   /**
@@ -634,7 +743,7 @@ class Pane extends Handler {
    * or more with one name, a pattern (`renameAll`).
    */
   async rename() {
-    const names = this.targets;
+    const names = this.#operands();
     if (names.length > 1) {
       await this.#renameAll(names);
       return;
@@ -817,7 +926,7 @@ class Pane extends Handler {
    * @param {'copy' | 'cut'} mode
    */
   #yank(mode) {
-    const names = this.targets;
+    const names = this.#operands();
     if (!names.length) {
       return;
     }
@@ -844,7 +953,7 @@ class Pane extends Handler {
    * @param {string} destination A URI.
    */
   async #send(mode, destination) {
-    const names = this.targets;
+    const names = this.#operands();
     if (!names.length) {
       return;
     }
@@ -930,20 +1039,26 @@ class Pane extends Handler {
   }
 
   /**
-   * The trash directory, if `pane.trash` sets one.
-   * @returns {string | null} Its URI.
-   * @throws {Error} A failure, if it isn't an absolute path.
+   * Whether an entry is where the trash shows — `trash` at the top, while the trash is on.
+   * @param {string} directory
+   * @param {string} name
+   * @returns {boolean}
    */
-  #trash() {
-    const trash = /** @type {string} */ (this.config.get('pane.trash'));
-    if (!trash) {
-      return null;
+  #mounted(directory, name) {
+    return name === 'trash' && directory === rootUri() && this.trash.enabled;
+  }
+
+  /**
+   * The targets, for an operation that changes them.
+   * @returns {string[]}
+   * @throws {Error} A failure for the trash's entry at the top, which only leads to it.
+   */
+  #operands() {
+    const names = this.targets;
+    if (names.some((name) => this.#mounted(this.state.uri, name))) {
+      throw failure('trash here is the trash itself: go into it to change what is inside');
     }
-    try {
-      return paths.toUri(paths.resolve(trash));
-    } catch (error) {
-      throw failure(`pane.trash in the config must be an absolute path: ${/** @type {Error} */ (error).message}`);
-    }
+    return names;
   }
 
   /**
@@ -1067,7 +1182,11 @@ class Pane extends Handler {
     if (!current()) {
       return 'superseded';
     }
-    const entries = listed
+    const shown = this.trash.enabled && uri === rootUri()
+      // The trash shows at the top, over anything real named so.
+      ? [...listed.filter((entry) => entry.name !== 'trash'), { name: 'trash', type: /** @type {FileType} */ ('directory'), symlink: false }]
+      : listed;
+    const entries = shown
       .map(({ name, type, symlink }) => ({ name, type, symlink, executable: false, size: null, mtime: null }))
       .sort(compareEntries);
     this.#remember();

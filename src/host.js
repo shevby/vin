@@ -14,6 +14,7 @@
  * @property {ConfigReader} config
  * @property {InstanceType<typeof import('./fs/file-system').FileSystem>} fs
  * @property {InstanceType<typeof import('./clipboard').Clipboard>} clipboard
+ * @property {InstanceType<typeof import('./trash').Trash>} trash
  * @property {InstanceType<typeof import('./messages').Messages>} messages
  * @property {(handler: Handler) => () => void} attach Called when a handler of the tree is initialized; returns
  *   what to call when it is disposed.

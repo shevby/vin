@@ -49,6 +49,7 @@ const { failure } = require('../../../errors');
  * @typedef {object} Outcome
  * @property {string[]} created The names now in the destination for each entry done — a new name when
  *   kept both — in the order given.
+ * @property {string[]} done The URIs of the entries done, as given — `created[i]` is `done[i]`'s new name.
  * @property {number} skipped Entries left alone: skipped, or moved where they already are.
  * @property {unknown[]} failures An error for each entry that failed; the others went on.
  * @property {boolean} cancelled Whether a conflict was answered with `cancel`, stopping the rest.
@@ -150,14 +151,15 @@ function same(a, b) {
  * @param {FileSystem} fs
  * @param {object} options
  * @param {Mode} options.mode
- * @param {string[]} options.sources URIs.
+ * @param {(string | { uri: string, name: string })[]} options.sources URIs — or URIs with the names to give
+ *   them, as restoring from the trash does.
  * @param {string} options.destination The directory's URI.
  * @param {Resolve} options.resolve
  * @returns {Promise<Outcome>}
  */
 async function transfer(fs, { mode, sources, destination, resolve }) {
   /** @type {Outcome} */
-  const outcome = { created: [], skipped: 0, failures: [], cancelled: false };
+  const outcome = { created: [], done: [], skipped: 0, failures: [], cancelled: false };
   /** @type {Action | null} */
   let policy = null;
 
@@ -256,8 +258,9 @@ async function transfer(fs, { mode, sources, destination, resolve }) {
     }
   };
 
-  for (const source of sources) {
-    const name = parentUri(source)?.name;
+  for (const item of sources) {
+    const source = typeof item === 'string' ? item : item.uri;
+    const name = typeof item === 'string' ? parentUri(source)?.name : item.name;
     try {
       if (name === undefined) {
         throw failure(`Can't ${mode} ${paths.displayUri(source)}: it's a root`);
@@ -267,6 +270,7 @@ async function transfer(fs, { mode, sources, destination, resolve }) {
         outcome.skipped++;
       } else {
         outcome.created.push(created);
+        outcome.done.push(source);
       }
     } catch (error) {
       if (error === CANCEL) {
