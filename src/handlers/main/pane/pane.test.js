@@ -564,3 +564,35 @@ test('shift+p pastes symlinks to what is on the clipboard', async (t) => {
   assert.ok(fs.lstatSync(path.join(dir, 'to', 'd')).isSymbolicLink());
   assert.deepEqual(pane.state.entries.map(({ name, type, symlink }) => ({ name, type, symlink })), [{ name: 'd', type: 'directory', symlink: true }]);
 });
+
+test('c w on a selection renames it with one name: $n, $i, $e, previewed; names among them swap', async (t) => {
+  const dir = tempDir(t, { 'a.mkv': 'a', 'b.mkv': 'b', 'c.mkv': 'c', 'x1.mkv': 'x' });
+  const { vin, pane, press, type, focus, messages } = await openWindow(dir);
+  await press('v v v c w');
+  await until(() => focus() === 'textField' || messages().length, 'the prompt');
+  assert.deepEqual(messages(), []);
+  const input = /** @type {any} */ (vin.windows.focused);
+  const prompt = input.parent;
+  assert.deepEqual([input.state.value, input.state.cursor], ['.mkv', 0], 'the extension they share');
+  assert.equal(prompt.state.preview, null);
+  await type('x$n');
+  assert.equal(prompt.state.preview, 'a.mkv → x1.mkv\nb.mkv → x2.mkv\nc.mkv → x3.mkv');
+  await press('enter');
+  await until(() => prompt.state.error, 'the error');
+  assert.equal(prompt.state.error, 'x1.mkv already exists', 'x1.mkv is not being renamed');
+  await press('ctrl+a ctrl+k');
+  await type('e$n$e');
+  await press('enter');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(messages(), ['Renamed 3 of 3 items']);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['e1.mkv', 'e2.mkv', 'e3.mkv', 'x1.mkv']);
+  assert.deepEqual(pane.state.selected, []);
+
+  await press('g g shift+v j j shift+v c w');
+  await until(() => focus() === 'textField', 'the prompt');
+  await type('e$i');
+  await press('enter');
+  await until(() => messages().length, 'the message');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['e0.mkv', 'e1.mkv', 'e2.mkv', 'x1.mkv']);
+  assert.deepEqual(['e0.mkv', 'e1.mkv', 'e2.mkv'].map((name) => fs.readFileSync(path.join(dir, name), 'utf8')), ['a', 'b', 'c']);
+});

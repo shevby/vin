@@ -6,7 +6,7 @@ const { openOverMain } = require('../../../test/dialogs');
 test('the text field has the focus; Enter closes with the text, Escape with null', async () => {
   const rename = await openOverMain(new Prompt({ message: 'New name', value: 'notes.txt', cursor: 5 }));
   assert.equal(rename.focus(), 'main.prompt.input');
-  assert.deepEqual(rename.window.state, { title: null, message: 'New name', error: null });
+  assert.deepEqual(rename.window.state, { title: null, message: 'New name', error: null, preview: null });
   await rename.press('shift+x ctrl+e');
   await rename.paste('.bak\n');
   await rename.press('enter');
